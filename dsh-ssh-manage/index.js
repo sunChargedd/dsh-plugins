@@ -8,22 +8,22 @@ import { batchExec, downloadFile, execCommand, inspectHost, listRemoteFiles, ope
 import { storagePaths } from './lib/storage.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
 
-const STATE_ROUTE = '/dsh-ssh-manager/state'
-const ACTION_ROUTE = '/dsh-ssh-manager/action'
-const PTY_ROUTE = '/dsh-ssh-manager/pty'
-const PTY_EVENTS_ROUTE = '/dsh-ssh-manager/pty/events'
-const PTY_OPEN_ROUTE = '/dsh-ssh-manager/pty/open'
-const PTY_INPUT_ROUTE = '/dsh-ssh-manager/pty/input'
-const PTY_RESIZE_ROUTE = '/dsh-ssh-manager/pty/resize'
-const PTY_CLOSE_ROUTE = '/dsh-ssh-manager/pty/close'
+const STATE_ROUTE = '/dsh-ssh-manage/state'
+const ACTION_ROUTE = '/dsh-ssh-manage/action'
+const PTY_ROUTE = '/dsh-ssh-manage/pty'
+const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
+const PTY_OPEN_ROUTE = '/dsh-ssh-manage/pty/open'
+const PTY_INPUT_ROUTE = '/dsh-ssh-manage/pty/input'
+const PTY_RESIZE_ROUTE = '/dsh-ssh-manage/pty/resize'
+const PTY_CLOSE_ROUTE = '/dsh-ssh-manage/pty/close'
 const MAX_PTY_SESSIONS = 16
 const PTY_IDLE_MS = 30 * 60 * 1000
 const MAX_PTY_BUFFER_BYTES = 4 * 1024 * 1024
 const PACKAGE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url))
 const ASSETS = [
-  { path: '/dsh-ssh-manager/assets/xterm.js', file: 'xterm.js', contentType: 'text/javascript; charset=utf-8' },
-  { path: '/dsh-ssh-manager/assets/xterm.css', file: 'xterm.css', contentType: 'text/css; charset=utf-8' },
-  { path: '/dsh-ssh-manager/assets/addon-fit.js', file: 'addon-fit.js', contentType: 'text/javascript; charset=utf-8' },
+  { path: '/dsh-ssh-manage/assets/xterm.js', file: 'xterm.js', contentType: 'text/javascript; charset=utf-8' },
+  { path: '/dsh-ssh-manage/assets/xterm.css', file: 'xterm.css', contentType: 'text/css; charset=utf-8' },
+  { path: '/dsh-ssh-manage/assets/addon-fit.js', file: 'addon-fit.js', contentType: 'text/javascript; charset=utf-8' },
 ]
 const MAX_BODY_BYTES = 16 * 1024 * 1024
 const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download']
@@ -356,7 +356,7 @@ async function openTextSession(paths, payload) {
 
 function registerPtyHttpRoutes(ctx, paths) {
   const register = (route, label) => {
-    ctx.effect(() => ctx.webServer.register(route), `dsh-ssh-manager: ${label}`)
+    ctx.effect(() => ctx.webServer.register(route), `dsh-ssh-manage: ${label}`)
   }
 
   register(
@@ -664,7 +664,7 @@ function registerAssetRoutes(ctx) {
             }
           },
         }),
-      `dsh-ssh-manager: asset ${asset.file}`,
+      `dsh-ssh-manage: asset ${asset.file}`,
     )
   }
 }
@@ -675,7 +675,7 @@ export const inject = ['webServer']
 
 export function apply(ctx) {
   if (!ctx || typeof ctx.webServer?.register !== 'function') {
-    throw new Error('dsh-ssh-manager requires DeepSeek Harness >=0.2.1-rc.3: ctx.webServer.register is unavailable.')
+    throw new Error('dsh-ssh-manage requires DeepSeek Harness >=0.2.1-rc.3: ctx.webServer.register is unavailable.')
   }
   const paths = resolveSshPaths(process.env)
   ctx.effect(
@@ -698,7 +698,7 @@ export function apply(ctx) {
           }
         },
       }),
-    'dsh-ssh-manager: state route',
+    'dsh-ssh-manage: state route',
   )
   ctx.effect(
     () =>
@@ -725,22 +725,22 @@ export function apply(ctx) {
           }
         },
       }),
-    'dsh-ssh-manager: action route',
+    'dsh-ssh-manage: action route',
   )
   registerPtyHttpRoutes(ctx, paths)
   registerAssetRoutes(ctx)
   if (typeof ctx.webServer.tapIndex === 'function') {
     const tags = [
-      '<link id="dsh-ssh-manager-xterm-css" rel="stylesheet" href="/dsh-ssh-manager/assets/xterm.css">',
-      '<script id="dsh-ssh-manager-xterm-script" src="/dsh-ssh-manager/assets/xterm.js"></script>',
-      '<script id="dsh-ssh-manager-xterm-fit" src="/dsh-ssh-manager/assets/addon-fit.js"></script>',
+      '<link id="dsh-ssh-manage-xterm-css" rel="stylesheet" href="/dsh-ssh-manage/assets/xterm.css">',
+      '<script id="dsh-ssh-manage-xterm-script" src="/dsh-ssh-manage/assets/xterm.js"></script>',
+      '<script id="dsh-ssh-manage-xterm-fit" src="/dsh-ssh-manage/assets/addon-fit.js"></script>',
     ].join('')
     ctx.effect(
       () =>
         ctx.webServer.tapIndex((html) =>
-          html.includes('dsh-ssh-manager/assets/xterm.js') ? html : html.replace('</head>', `${tags}</head>`),
+          html.includes('dsh-ssh-manage/assets/xterm.js') ? html : html.replace('</head>', `${tags}</head>`),
         ),
-      'dsh-ssh-manager: terminal asset preload',
+      'dsh-ssh-manage: terminal asset preload',
     )
   }
   ctx.effect(
@@ -753,7 +753,7 @@ export function apply(ctx) {
           })
         },
       }),
-    'dsh-ssh-manager: pty upgrade route',
+    'dsh-ssh-manage: pty upgrade route',
   )
   ctx.effect(
     () => () => {
@@ -769,9 +769,9 @@ export function apply(ctx) {
       }
       ptyEventClients.clear()
     },
-    'dsh-ssh-manager: pty sessions',
+    'dsh-ssh-manage: pty sessions',
   )
   ctx.inject(['tools'], (child) => {
-    child.effect(() => child.tools.register(managerTool(paths)), 'dsh-ssh-manager: agent tool')
+    child.effect(() => child.tools.register(managerTool(paths)), 'dsh-ssh-manage: agent tool')
   })
 }

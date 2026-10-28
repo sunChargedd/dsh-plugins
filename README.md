@@ -19,14 +19,14 @@
 
 在 DSH 侧边栏统一管理 agent 工具的 **Skills** 与 **MCP Servers**：跨 DSH、Claude Code、Codex、Cursor 等工具增删改查、共享、导入导出、备份恢复。当前版本 `0.5.5`。
 
-### [dsh-ssh-manager](dsh-ssh-manager/README.md)
+### [dsh-ssh-manage](dsh-ssh-manage/README.md)
 
 在 DSH 侧边栏管理 SSH 主机，支持密码登录、主机分组、批量命令、文件传输和**真正的交互式 PTY 终端**（xterm.js，标签页会话）。当前版本 `0.1.0`。
 
 ## 安装
 
 - `dsh-mcp-skill-manage` 已发布到 npm，可在 DSH 的「插件」/「插件市场」中搜索安装。
-- `dsh-ssh-manager` 目前从本仓库对应子目录本地安装/链接。注意 npm 上同名的 `dsh-ssh-manager` 是另一位作者的另一个插件，不要混淆；如果后续要发布 npm 包，需要先改名。
+- `dsh-ssh-manage` 尚未发布 npm，从本仓库对应子目录本地安装/链接；npm 包名 `dsh-ssh-manage` 目前未被占用，后续可发布。
 
 要求：
 
@@ -38,7 +38,7 @@
 
 ```bash
 # SSH 管理插件
-cd dsh-ssh-manager
+cd dsh-ssh-manage
 npm install
 npm test
 
@@ -54,7 +54,7 @@ npm test
 ```
 dsh-plugins/
 ├── dsh-mcp-skill-manage/   # MCP & Skill Manager
-├── dsh-ssh-manager/        # SSH Manager
+├── dsh-ssh-manage/         # SSH Manager
 └── LICENSE
 ```
 

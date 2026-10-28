@@ -12,7 +12,7 @@ const { normalizeEntry } = metadataTest
 const { parseProbeOutput } = sshTest
 const { runAction } = indexTest
 
-const temp = await mkdtemp(path.join(os.tmpdir(), 'dsh-ssh-manager-'))
+const temp = await mkdtemp(path.join(os.tmpdir(), 'dsh-ssh-manage-'))
 const paths = {
   configPath: path.join(temp, '.ssh', 'config'),
   backupDir: path.join(temp, '.state', 'backups'),

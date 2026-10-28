@@ -1,12 +1,12 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-ssh-manager',
+  id: 'dsh-ssh-manage',
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const NS = 'dsh-ssh-manager'
-    const PANEL_ID = 'dsh-ssh-manager'
-    const STATE_ROUTE = '/dsh-ssh-manager/state'
-    const ACTION_ROUTE = '/dsh-ssh-manager/action'
+    const NS = 'dsh-ssh-manage'
+    const PANEL_ID = 'dsh-ssh-manage'
+    const STATE_ROUTE = '/dsh-ssh-manage/state'
+    const ACTION_ROUTE = '/dsh-ssh-manage/action'
 
     // ---------------------------------------------------------------------
     // Copy (zh/en pairs, registered through the Client locale service)
@@ -2791,9 +2791,9 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
 
     const TERMINAL_ASSET_IDS = {
-      css: 'dsh-ssh-manager-xterm-css',
-      script: 'dsh-ssh-manager-xterm-script',
-      fit: 'dsh-ssh-manager-xterm-fit',
+      css: 'dsh-ssh-manage-xterm-css',
+      script: 'dsh-ssh-manage-xterm-script',
+      fit: 'dsh-ssh-manage-xterm-fit',
     }
     let terminalAssetsPromise = null
 
@@ -2836,11 +2836,11 @@ window.__ModuleLoader__.load({
         const link = document.createElement('link')
         link.id = TERMINAL_ASSET_IDS.css
         link.rel = 'stylesheet'
-        link.href = '/dsh-ssh-manager/assets/xterm.css'
+        link.href = '/dsh-ssh-manage/assets/xterm.css'
         document.head.appendChild(link)
       }
-      terminalAssetsPromise = loadScriptAsset(TERMINAL_ASSET_IDS.script, '/dsh-ssh-manager/assets/xterm.js')
-        .then(() => loadScriptAsset(TERMINAL_ASSET_IDS.fit, '/dsh-ssh-manager/assets/addon-fit.js'))
+      terminalAssetsPromise = loadScriptAsset(TERMINAL_ASSET_IDS.script, '/dsh-ssh-manage/assets/xterm.js')
+        .then(() => loadScriptAsset(TERMINAL_ASSET_IDS.fit, '/dsh-ssh-manage/assets/addon-fit.js'))
         .then(() => {
           if (!window.Terminal || !window.FitAddon || !window.FitAddon.FitAddon) throw new Error('Terminal assets did not initialize')
           return { Terminal: window.Terminal, FitAddon: window.FitAddon.FitAddon }
@@ -2912,7 +2912,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    const PTY_EVENTS_ROUTE = '/dsh-ssh-manager/pty/events'
+    const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
     const ptyStream = { source: null, ready: false, promise: null, listeners: new Map() }
     const ptyActiveIds = new Set()
     const ptyStreamLostHandlers = new Set()
@@ -2938,7 +2938,7 @@ window.__ModuleLoader__.load({
       window.addEventListener('pagehide', () => {
         for (const id of ptyActiveIds) {
           try {
-            navigator.sendBeacon('/dsh-ssh-manager/pty/close', new Blob([JSON.stringify({ id })], { type: 'application/json' }))
+            navigator.sendBeacon('/dsh-ssh-manage/pty/close', new Blob([JSON.stringify({ id })], { type: 'application/json' }))
           } catch {}
         }
         ptyActiveIds.clear()
@@ -3110,7 +3110,7 @@ window.__ModuleLoader__.load({
 
         const postClose = (id) => {
           try {
-            void fetch('/dsh-ssh-manager/pty/close', {
+            void fetch('/dsh-ssh-manage/pty/close', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ id }),
@@ -3128,7 +3128,7 @@ window.__ModuleLoader__.load({
 
         const sendResize = () => {
           if (!sessionKey) return
-          void ptyPost('/dsh-ssh-manager/pty/resize', {
+          void ptyPost('/dsh-ssh-manage/pty/resize', {
             id: sessionKey,
             cols: term?.cols ?? 80,
             rows: term?.rows ?? 24,
@@ -3177,7 +3177,7 @@ window.__ModuleLoader__.load({
               const chunk = data.slice(index, end)
               index = end - 32_768
               inputChain = inputChain
-                .then(() => ptyPost('/dsh-ssh-manager/pty/input', { id, data: chunk }, 15_000))
+                .then(() => ptyPost('/dsh-ssh-manage/pty/input', { id, data: chunk }, 15_000))
                 .catch((error) => {
                   if (!removed && !stopped && !finished && /not found/i.test(errorMessage(error))) failSession(error)
                 })
@@ -3233,7 +3233,7 @@ window.__ModuleLoader__.load({
           } catch {}
           const openedId = sessionKey
           try {
-            await ptyPost('/dsh-ssh-manager/pty/open', {
+            await ptyPost('/dsh-ssh-manage/pty/open', {
               id: openedId,
               host: hostRef.current.host,
               cols: dims.cols,
@@ -4252,7 +4252,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'ssh-vaultMeta' },
-              h('span', null, 'dsh-ssh-manager'),
+              h('span', null, 'dsh-ssh-manage'),
               h('span', { className: 'ssh-dot' }),
               h('span', null, t('settings.aboutTag')),
             ),
@@ -4665,7 +4665,7 @@ window.__ModuleLoader__.load({
       }
 
       componentDidCatch(error) {
-        console.error('dsh-ssh-manager: interface error', error)
+        console.error('dsh-ssh-manage: interface error', error)
       }
 
       retry() {
@@ -4700,8 +4700,8 @@ window.__ModuleLoader__.load({
      * @param ctx - browser plugin context.
      */
     function apply(ctx) {
-      ctx.effect(() => ctx.locale.register(NS, 'zh', ZH), 'dsh-ssh-manager: zh dictionary')
-      ctx.effect(() => ctx.locale.register(NS, 'en', EN), 'dsh-ssh-manager: en dictionary')
+      ctx.effect(() => ctx.locale.register(NS, 'zh', ZH), 'dsh-ssh-manage: zh dictionary')
+      ctx.effect(() => ctx.locale.register(NS, 'en', EN), 'dsh-ssh-manage: en dictionary')
       const t = ctx.locale.bind(NS)
       const BoundPage = (props) =>
         h(

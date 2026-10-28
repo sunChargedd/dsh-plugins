@@ -215,15 +215,15 @@ const ctx = {
   inject: (names, callback) => callback({ effect: (fn) => fn(), tools: { register: () => () => {} } }),
 }
 apply(ctx)
-const assetPaths = ['/dsh-ssh-manager/assets/xterm.js', '/dsh-ssh-manager/assets/xterm.css', '/dsh-ssh-manager/assets/addon-fit.js']
+const assetPaths = ['/dsh-ssh-manage/assets/xterm.js', '/dsh-ssh-manage/assets/xterm.css', '/dsh-ssh-manage/assets/addon-fit.js']
 for (const assetPath of assetPaths) assert.ok(routes.some((route) => route.path === assetPath), `missing asset route ${assetPath}`)
-assert.ok(routes.some((route) => route.path === '/dsh-ssh-manager/state'))
-assert.ok(routes.some((route) => route.path === '/dsh-ssh-manager/action'))
-assert.ok(upgrades.some((route) => route.path === '/dsh-ssh-manager/pty'))
+assert.ok(routes.some((route) => route.path === '/dsh-ssh-manage/state'))
+assert.ok(routes.some((route) => route.path === '/dsh-ssh-manage/action'))
+assert.ok(upgrades.some((route) => route.path === '/dsh-ssh-manage/pty'))
 assert.ok(readFileSync(path.join(packageDir, 'assets', 'xterm.js')).length > 100_000)
 assert.ok(readFileSync(path.join(packageDir, 'assets', 'xterm.css')).length > 1000)
 
-const cssRoute = routes.find((route) => route.path === '/dsh-ssh-manager/assets/xterm.css')
+const cssRoute = routes.find((route) => route.path === '/dsh-ssh-manage/assets/xterm.css')
 let status
 let headers = {}
 let body
@@ -237,7 +237,7 @@ await cssRoute.handler({ method: 'GET', headers: {} }, response)
 assert.equal(status, 200)
 assert.match(headers['content-type'], /^text\/css/)
 assert.ok(body.length > 1000)
-const jsRoute = routes.find((route) => route.path === '/dsh-ssh-manager/assets/xterm.js')
+const jsRoute = routes.find((route) => route.path === '/dsh-ssh-manage/assets/xterm.js')
 status = undefined
 body = undefined
 await jsRoute.handler({ method: 'HEAD', headers: {} }, response)
@@ -261,7 +261,7 @@ const untrustedCtx = {
   inject: (names, callback) => callback({ effect: (fn) => fn(), tools: { register: () => () => {} } }),
 }
 apply(untrustedCtx)
-const deniedCss = untrustedRoutes.find((route) => route.path === '/dsh-ssh-manager/assets/xterm.css')
+const deniedCss = untrustedRoutes.find((route) => route.path === '/dsh-ssh-manage/assets/xterm.css')
 status = undefined
 body = undefined
 await deniedCss.handler({ method: 'GET', headers: {} }, response)

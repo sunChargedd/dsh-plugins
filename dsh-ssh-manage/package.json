@@ -1,5 +1,5 @@
 {
-  "name": "dsh-ssh-manager",
+  "name": "dsh-ssh-manage",
   "version": "0.1.0",
   "description": "A DSH sidebar plugin for managing SSH host profiles with a real interactive PTY terminal.",
   "license": "MIT",
@@ -51,9 +51,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sunChargedd/dsh-plugins.git",
-    "directory": "dsh-ssh-manager"
+    "directory": "dsh-ssh-manage"
   },
-  "homepage": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manager#readme",
+  "homepage": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manage#readme",
   "bugs": {
     "url": "https://github.com/sunChargedd/dsh-plugins/issues"
   }

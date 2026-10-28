@@ -29,3 +29,4 @@ exports/
 
 # Keep the SSH plugin at the monorepo root only
 /dsh-mcp-skill-manage/dsh-ssh-manager/
+/dsh-mcp-skill-manage/dsh-ssh-manage/

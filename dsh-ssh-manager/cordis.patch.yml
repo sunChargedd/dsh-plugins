@@ -1,4 +1,0 @@
-- insert:
-    - id: dsh-ssh-manager
-      name: 'dsh-ssh-manager'
-      config: {}

@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-ssh-manage
+      name: 'dsh-ssh-manage'
+      config: {}
