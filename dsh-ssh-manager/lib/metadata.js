@@ -1,0 +1,58 @@
+import * as fs from 'node:fs/promises'
+import { atomicWriteFile, readJson, storagePaths } from './storage.js'
+
+function clean(value, max = 80) {
+  return String(value ?? '').trim().slice(0, max)
+}
+
+function nonNegativeInteger(value, cap) {
+  const numeric = typeof value === 'number' || typeof value === 'string' ? Number(value) : Number.NaN
+  if (!Number.isFinite(numeric)) return 0
+  return Math.min(Math.max(Math.round(numeric), 0), cap)
+}
+
+function normalizeEntry(alias, input = {}) {
+  return {
+    group: clean(input.group),
+    tags: Array.isArray(input.tags) ? [...new Set(input.tags.map((tag) => clean(tag, 32)).filter(Boolean))].slice(0, 20) : [],
+    favorite: input.favorite === true,
+    label: clean(input.label, 120),
+    note: clean(input.note, 240),
+    system: clean(input.system, 80),
+    cpuCores: nonNegativeInteger(input.cpuCores, 4096),
+    memoryGB: nonNegativeInteger(input.memoryGB, 1048576),
+    diskGB: nonNegativeInteger(input.diskGB, 1048576),
+    latencyMs: nonNegativeInteger(input.latencyMs, 600000),
+    checkedAt: clean(input.checkedAt, 40),
+  }
+}
+
+export async function loadMetadata(paths) {
+  const resolved = storagePaths(paths)
+  const value = await readJson(resolved.metadataPath, {})
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { paths: resolved, entries: {} }
+  const entries = Object.fromEntries(Object.entries(value).map(([alias, data]) => [alias, normalizeEntry(alias, data)]))
+  return { paths: resolved, entries }
+}
+
+export async function saveMetadata(paths, entries) {
+  const resolved = storagePaths(paths)
+  const normalized = Object.fromEntries(Object.entries(entries || {}).map(([alias, data]) => [alias, normalizeEntry(alias, data)]))
+  await atomicWriteFile(resolved.metadataPath, `${JSON.stringify(normalized, null, 2)}\n`, 0o600)
+  return { saved: true }
+}
+
+export async function updateMetadata(paths, alias, data) {
+  const current = await loadMetadata(paths)
+  current.entries[alias] = normalizeEntry(alias, { ...current.entries[alias], ...data })
+  await saveMetadata(current.paths, current.entries)
+  return current.entries[alias]
+}
+
+export async function deleteMetadata(paths, alias) {
+  const current = await loadMetadata(paths)
+  delete current.entries[alias]
+  await saveMetadata(current.paths, current.entries)
+}
+
+export const __test = { normalizeEntry }

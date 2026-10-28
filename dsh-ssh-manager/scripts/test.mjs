@@ -1,0 +1,268 @@
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPaths } from '../lib/ssh-config.js'
+import { getPassword, hasPassword, removePassword, setPassword } from '../lib/vault.js'
+import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
+import { __test as sshTest, execCommand } from '../lib/ssh-client.js'
+import { __test as indexTest } from '../index.js'
+
+const { normalizeEntry } = metadataTest
+const { parseProbeOutput } = sshTest
+const { runAction } = indexTest
+
+const temp = await mkdtemp(path.join(os.tmpdir(), 'dsh-ssh-manager-'))
+const paths = {
+  configPath: path.join(temp, '.ssh', 'config'),
+  backupDir: path.join(temp, '.state', 'backups'),
+}
+try {
+  const source = '# keep this comment\nHost *\n  AddKeysToAgent yes\n\nHost prod prod-old\n  HostName example.com\n  User deploy\n  Port 2222\n  ForwardAgent yes\n\nHost local\n  HostName 127.0.0.1\n'
+  await mkdir(path.dirname(paths.configPath), { recursive: true })
+  await writeFile(paths.configPath, source, 'utf8')
+  const parsed = parseSshConfig(source)
+  assert.deepEqual(parsed.hosts.map((host) => host.host), ['prod', 'local'])
+  assert.equal(parsed.hosts[0].aliases[0], 'prod-old')
+  assert.equal(parsed.hosts[0].forwardAgent, true)
+
+  let state = await listSshHosts(paths)
+  assert.equal(state.hosts.length, 2)
+  const saved = await saveSshHost({ paths, originalHost: 'prod', host: { host: 'staging', aliases: ['staging-old'], hostname: 'staging.example.com', user: 'ops', port: '22', identityFile: '~/.ssh/id_ed25519', proxyJump: 'bastion', forwardAgent: false } })
+  assert.equal(saved.saved, true)
+  assert.ok(saved.backup)
+  const afterSave = await readFile(paths.configPath, 'utf8')
+  assert.match(afterSave, /Host staging staging-old/)
+  assert.match(afterSave, /Host \*\n  AddKeysToAgent yes/)
+  assert.doesNotMatch(afterSave, /Host prod prod-old/)
+
+  await assert.rejects(() => saveSshHost({ paths, host: { host: 'local', hostname: 'collision' } }), /already exists/)
+  await assert.rejects(() => saveSshHost({ paths, host: { host: 'injected', hostname: 'safe\nHost evil' } }), /cannot contain newlines/)
+  const removed = await deleteSshHost({ paths, host: 'staging' })
+  assert.equal(removed.removed, true)
+  state = await listSshHosts(paths)
+  assert.deepEqual(state.hosts.map((host) => host.host), ['local'])
+  console.log('ok - SSH config parse, atomic save, collision guard and delete')
+
+  const patchPaths = {
+    configPath: path.join(temp, '.patch', 'config'),
+    backupDir: path.join(temp, '.patch', 'backups'),
+  }
+  const patchSource = [
+    '# global comment',
+    'Host db db-old',
+    '  HostName db.example.com',
+    '  User admin',
+    '  Port 2200',
+    '  # keep this comment',
+    '  ServerAliveInterval 60',
+    '  LocalForward 8080 localhost:80',
+    '',
+    'Match host db',
+    '  User matchuser',
+    '',
+    'Host web',
+    '  HostName web.example.com',
+    '',
+  ].join('\n')
+  await mkdir(path.dirname(patchPaths.configPath), { recursive: true })
+  await writeFile(patchPaths.configPath, patchSource, 'utf8')
+  const patchedParse = parseSshConfig(patchSource)
+  assert.deepEqual(patchedParse.hosts.map((host) => host.host), ['db', 'web'])
+  assert.deepEqual(patchedParse.hosts[0].aliases, ['db-old'])
+  assert.equal(patchedParse.blocks.length, 2)
+  const dbBlock = patchedParse.blocks.find((block) => block.patterns.includes('db'))
+  assert.ok(dbBlock)
+  assert.doesNotMatch(dbBlock.text, /Match host db/)
+  assert.match(dbBlock.text, /LocalForward 8080 localhost:80/)
+
+  // (1) edit in place: unmanaged lines and the extra alias survive, managed options update once.
+  await saveSshHost({ paths: patchPaths, originalHost: 'db', host: { host: 'db', hostname: 'db2.example.com', user: 'admin2', port: '2201' } })
+  let patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /^Host db db-old$/m)
+  assert.match(patchText, /Host db db-old\n  HostName db2\.example\.com\n  User admin2\n  Port 2201\n  # keep this comment\n  ServerAliveInterval 60\n  LocalForward 8080 localhost:80\n/)
+  assert.match(patchText, /^Match host db\n  User matchuser$/m)
+  assert.equal((patchText.match(/HostName/g) || []).length, 2)
+
+  // Saving again must never duplicate managed options.
+  await saveSshHost({ paths: patchPaths, originalHost: 'db', host: { host: 'db', hostname: 'db2.example.com', user: 'admin2', port: '2201' } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.equal((patchText.match(/HostName/g) || []).length, 2)
+
+  // Missing managed options are appended; options that become empty are dropped.
+  await saveSshHost({ paths: patchPaths, originalHost: 'web', host: { host: 'web', hostname: 'web2.example.com', user: 'www', port: '443' } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /Host web\n  HostName web2\.example\.com\n  User www\n  Port 443\n/)
+  await saveSshHost({ paths: patchPaths, originalHost: 'web', host: { host: 'web', hostname: 'web3.example.com' } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.doesNotMatch(patchText, /^  User www$/m)
+  assert.doesNotMatch(patchText, /^  Port 443$/m)
+  assert.match(patchText, /^  HostName web3\.example\.com$/m)
+
+  // (2) rename the primary alias: the extra alias and unmanaged lines are retained.
+  await saveSshHost({ paths: patchPaths, originalHost: 'db', host: { host: 'database', hostname: 'db2.example.com', user: 'admin2', port: '2201' } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /^Host database db-old$/m)
+  assert.doesNotMatch(patchText, /^Host db db-old$/m)
+  assert.match(patchText, /^  # keep this comment$/m)
+  assert.match(patchText, /^  ServerAliveInterval 60$/m)
+  assert.match(patchText, /^  LocalForward 8080 localhost:80$/m)
+  assert.match(patchText, /^Match host db\n  User matchuser$/m)
+
+  // (3) a following Match section survives delete untouched.
+  const patchedDelete = await deleteSshHost({ paths: patchPaths, host: 'database' })
+  assert.equal(patchedDelete.removed, true)
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /^Match host db\n  User matchuser$/m)
+  assert.match(patchText, /^Host web$/m)
+  assert.doesNotMatch(patchText, /Host database/)
+
+  // (4) appending a new host still uses the canonical block format.
+  await saveSshHost({ paths: patchPaths, host: { host: 'fresh', hostname: 'fresh.example.com', user: 'root', port: '22', identityFile: '~/.ssh/id_ed25519', forwardAgent: true } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /Host fresh\n  HostName fresh\.example\.com\n  User root\n  Port 22\n  IdentityFile ~\/\.ssh\/id_ed25519\n  ForwardAgent yes\n$/)
+  assert.match(patchText, /^Match host db\n  User matchuser$/m)
+
+  // (5) multiple IdentityFile fallback keys: only the first is managed, the rest stay verbatim.
+  const multiSource = `${patchText.trimEnd()}\n\nHost multi\n  HostName multi.example.com\n  IdentityFile ~/.ssh/id_first\n  IdentityFile ~/.ssh/id_second\n`
+  await writeFile(patchPaths.configPath, multiSource, 'utf8')
+  await saveSshHost({ paths: patchPaths, originalHost: 'multi', host: { host: 'multi', hostname: 'multi2.example.com', user: 'multi', identityFile: '~/.ssh/id_first_v2' } })
+  patchText = await readFile(patchPaths.configPath, 'utf8')
+  assert.match(patchText, /HostName multi2\.example\.com/)
+  assert.match(patchText, /\n  IdentityFile ~\/\.ssh\/id_first_v2\n  IdentityFile ~\/\.ssh\/id_second\n/)
+  assert.equal((patchText.match(/IdentityFile/g) || []).length, 3)
+  console.log('ok - SSH config edits preserve aliases/unmanaged lines and do not touch Match sections')
+
+  assert.ok(indexTest.MAX_BODY_BYTES >= 14 * 1024 * 1024)
+  assert.equal(indexTest.MAX_BODY_BYTES, 16 * 1024 * 1024)
+  assert.equal(resolveSshPaths({ HOME: '/home/demo' }).stateDir, path.join('/home/demo', '.dsh', '.ssh-manager'))
+  const dshHomePaths = resolveSshPaths({ HOME: '/home/demo', DSH_HOME: '/opt/dsh' })
+  assert.equal(dshHomePaths.stateDir, path.join('/opt/dsh', '.ssh-manager'))
+  assert.equal(dshHomePaths.backupDir, path.join('/opt/dsh', '.ssh-manager', 'backups'))
+  assert.equal(dshHomePaths.configPath, path.join('/home/demo', '.ssh', 'config'))
+  assert.equal(resolveSshPaths({ HOME: '/home/demo', DSH_HOME: '/opt/dsh', DSH_SSH_MANAGER_HOME: '/custom/ssh-manager' }).stateDir, '/custom/ssh-manager')
+  console.log('ok - action body cap is 16 MiB and the state dir honors DSH_HOME')
+
+  const securePaths = { stateDir: path.join(temp, '.dsh', '.ssh-manager') }
+  await setPassword(securePaths, 'local', 'correct horse battery staple')
+  assert.equal(await getPassword(securePaths, 'local'), 'correct horse battery staple')
+  assert.equal(await hasPassword(securePaths, 'local'), true)
+  const vaultText = await readFile(path.join(securePaths.stateDir, 'vault.json'), 'utf8')
+  assert.doesNotMatch(vaultText, /correct horse battery staple/)
+  await updateMetadata(securePaths, 'local', { group: 'dev', tags: ['lab', 'lab'], favorite: true })
+  const metadata = await loadMetadata(securePaths)
+  assert.deepEqual(metadata.entries.local.tags, ['lab'])
+  assert.equal(metadata.entries.local.favorite, true)
+  await removePassword(securePaths, 'local')
+  assert.equal(await getPassword(securePaths, 'local'), null)
+  console.log('ok - encrypted password vault and host metadata')
+
+  const rich = normalizeEntry('demo', {
+    group: ' ops ',
+    tags: ['a', 'a'],
+    favorite: true,
+    label: 'Demo',
+    note: 'n'.repeat(300),
+    system: 's'.repeat(100),
+    cpuCores: '8',
+    memoryGB: '2.6',
+    diskGB: 100.5,
+    latencyMs: '12.4',
+    checkedAt: '2026-01-01T00:00:00.000Z',
+    unknown: 'dropped',
+  })
+  assert.equal(rich.group, 'ops')
+  assert.deepEqual(rich.tags, ['a'])
+  assert.equal(rich.favorite, true)
+  assert.equal(rich.label, 'Demo')
+  assert.equal(rich.note.length, 240)
+  assert.equal(rich.system.length, 80)
+  assert.equal(rich.cpuCores, 8)
+  assert.equal(rich.memoryGB, 3)
+  assert.equal(rich.diskGB, 101)
+  assert.equal(rich.latencyMs, 12)
+  assert.equal(rich.checkedAt, '2026-01-01T00:00:00.000Z')
+  assert.equal('unknown' in rich, false)
+  assert.deepEqual(Object.keys(rich).sort(), ['checkedAt', 'cpuCores', 'diskGB', 'favorite', 'group', 'label', 'latencyMs', 'memoryGB', 'note', 'system', 'tags'])
+
+  const clamped = normalizeEntry('demo', { cpuCores: 9999, memoryGB: 2_000_000, diskGB: '2000000', latencyMs: 700_000 })
+  assert.equal(clamped.cpuCores, 4096)
+  assert.equal(clamped.memoryGB, 1048576)
+  assert.equal(clamped.diskGB, 1048576)
+  assert.equal(clamped.latencyMs, 600000)
+
+  const defaults = normalizeEntry('demo', {})
+  assert.equal(defaults.note, '')
+  assert.equal(defaults.system, '')
+  assert.equal(defaults.cpuCores, 0)
+  assert.equal(defaults.memoryGB, 0)
+  assert.equal(defaults.diskGB, 0)
+  assert.equal(defaults.latencyMs, 0)
+  assert.equal(defaults.checkedAt, '')
+  assert.equal(normalizeEntry('demo', { cpuCores: -4, memoryGB: '-1' }).cpuCores, 0)
+  assert.equal(normalizeEntry('demo', { cpuCores: -4, memoryGB: '-1' }).memoryGB, 0)
+  assert.equal(normalizeEntry('demo', { cpuCores: 'not-a-number' }).cpuCores, 0)
+  console.log('ok - host metadata normalizes info fields, caps and drops unknown keys')
+
+  const passwordlessPaths = {
+    configPath: path.join(temp, '.passwordless', 'config'),
+    stateDir: path.join(temp, '.passwordless', 'state'),
+    backupDir: path.join(temp, '.passwordless', 'backups'),
+  }
+  await mkdir(path.dirname(passwordlessPaths.configPath), { recursive: true })
+  await writeFile(passwordlessPaths.configPath, 'Host nopass\n  HostName 192.0.2.1\n  IdentityFile ~/.ssh/id_ed25519\n', 'utf8')
+  const testStarted = Date.now()
+  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/test', { host: 'nopass' }), /Password is not configured for SSH host "nopass"/)
+  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/exec', { host: 'nopass', command: 'true' }), /Password is not configured for SSH host "nopass"/)
+  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, null, 'true'), /Password is required/)
+  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, '', 'true'), /Password is required/)
+  assert.ok(Date.now() - testStarted < 5_000)
+  console.log('ok - password-only transport rejects a host without a stored password before connecting')
+
+  assert.deepEqual(parseProbeOutput('SYS=Linux\nOS=Ubuntu 22.04.3 LTS\nCORES=8\nMEM_MB=16384\nDISK_MB=51200\n'), { system: 'Ubuntu 22.04.3 LTS', cpuCores: 8, memoryGB: 16, diskGB: 50 })
+  assert.deepEqual(parseProbeOutput('SYS=Darwin\n'), { system: 'Darwin', cpuCores: 0, memoryGB: 0, diskGB: 0 })
+  assert.deepEqual(parseProbeOutput(''), { system: '', cpuCores: 0, memoryGB: 0, diskGB: 0 })
+  assert.equal(parseProbeOutput('OS=Debian GNU/Linux 12\nMEM_MB=15999\nDISK_MB=51201').memoryGB, 16)
+  assert.equal(parseProbeOutput('OS=Debian GNU/Linux 12\nMEM_MB=15999\nDISK_MB=51201').diskGB, 50)
+  assert.equal(parseProbeOutput('OS="Rocky Linux 9.3"').system, 'Rocky Linux 9.3')
+  console.log('ok - probe output parsing handles full and missing fields')
+
+  const routePaths = {
+    configPath: path.join(temp, '.routes', 'config'),
+    stateDir: path.join(temp, '.routes', 'state'),
+    backupDir: path.join(temp, '.routes', 'backups'),
+  }
+  await mkdir(path.dirname(routePaths.configPath), { recursive: true })
+  await writeFile(routePaths.configPath, 'Host old\n  HostName old.example.com\n', 'utf8')
+  await setPassword(routePaths, 'old', 'rename-secret')
+  await updateMetadata(routePaths, 'old', { group: 'ops', note: 'keep me' })
+  const renamed = await runAction(routePaths, 'host/save', { originalHost: 'old', host: { host: 'renamed', hostname: 'renamed.example.com' } })
+  assert.equal(renamed.saved, true)
+  assert.equal(renamed.state.stateDir, routePaths.stateDir)
+  assert.equal(renamed.state.backupDir, routePaths.backupDir)
+  assert.equal(renamed.state.hosts.length, 1)
+  assert.equal(renamed.state.hosts[0].host, 'renamed')
+  assert.equal(renamed.state.hosts[0].group, 'ops')
+  assert.equal(renamed.state.hosts[0].note, 'keep me')
+  assert.equal(renamed.state.hosts[0].passwordConfigured, true)
+  const renamedMetadata = await loadMetadata(routePaths)
+  assert.equal(renamedMetadata.entries.old, undefined)
+  assert.equal(renamedMetadata.entries.renamed.group, 'ops')
+  assert.equal(await getPassword(routePaths, 'renamed'), 'rename-secret')
+  assert.equal(await getPassword(routePaths, 'old'), null)
+
+  const tool = indexTest.managerTool(routePaths)
+  assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
+  const metadataViaObject = await tool.execute({ action: 'set_metadata', host: { host: 'renamed' }, metadata: { note: 'from tool' } })
+  assert.equal(metadataViaObject.metadata.note, 'from tool')
+  assert.equal(metadataViaObject.state.hosts[0].note, 'from tool')
+  const metadataViaString = await tool.execute({ action: 'set_metadata', host: 'renamed', metadata: { label: 'Renamed' } })
+  assert.equal(metadataViaString.metadata.label, 'Renamed')
+  assert.equal((await tool.execute({ action: 'overview' })).hostCount, 1)
+  await assert.rejects(() => runAction(routePaths, 'ssh/exec', {}), /"host" is required/)
+  await assert.rejects(() => tool.execute({ action: 'exec', host: { hostname: 'no-alias' }, command: 'true' }), /"host" is required/)
+  console.log('ok - host rename migrates metadata and the stored password')
+  console.log('ok - agent tool accepts string/object host, normalizes aliases and reports missing host')
+} finally {
+  await rm(temp, { recursive: true, force: true })
+}

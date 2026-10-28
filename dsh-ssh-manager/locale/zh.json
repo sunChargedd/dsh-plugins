@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH 主机管理",
+    "description": "在 DSH 中管理 ~/.ssh/config 主机、分组、凭据、远程命令与 SFTP 文件。"
+  }
+}

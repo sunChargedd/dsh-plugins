@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "SSH Host Manager",
+    "description": "Manage ~/.ssh/config hosts, groups, credentials, remote commands and SFTP files inside DSH."
+  }
+}

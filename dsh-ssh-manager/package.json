@@ -1,0 +1,60 @@
+{
+  "name": "dsh-ssh-manager",
+  "version": "0.1.0",
+  "description": "A DSH sidebar plugin for managing SSH host profiles with a real interactive PTY terminal.",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.1-rc.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib/**/*.js",
+    "locale/*.json",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "assets/*"
+  ],
+  "scripts": {
+    "check": "node --check index.js && node --check client.js && node --check lib/*.js && node --check scripts/test.mjs && node --check scripts/test-ws.mjs && node --check scripts/test-pty.mjs && node --check scripts/test-sse.mjs && node --check scripts/check-client.mjs && node scripts/check-client.mjs",
+    "test": "npm run check && node scripts/test.mjs && node scripts/test-ws.mjs && node scripts/test-pty.mjs && node scripts/test-sse.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sunChargedd/dsh-plugins.git",
+    "directory": "dsh-ssh-manager"
+  },
+  "homepage": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manager#readme",
+  "bugs": {
+    "url": "https://github.com/sunChargedd/dsh-plugins/issues"
+  }
+}

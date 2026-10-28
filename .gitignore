@@ -1,0 +1,31 @@
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local test artefacts
+coverage/
+test-results/
+.tmp/
+*.tmp-*
+*.bak-*
+*.bak
+
+# Local plugin state must never be committed
+.mcp-skill-manager/
+exports/
+
+# Keep the SSH plugin at the monorepo root only
+/dsh-mcp-skill-manage/dsh-ssh-manager/
