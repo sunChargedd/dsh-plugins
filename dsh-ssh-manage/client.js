@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
       'toolbar.refresh': ['刷新', 'Refresh'],
       'toolbar.groups': ['分组', 'Groups'],
       'toolbar.new': ['新建主机', 'New host'],
-      'toolbar.newShort': ['+ SSH', '+ SSH'],
+      'toolbar.newShort': ['SSH', 'SSH'],
       'toolbar.filter': ['只看收藏', 'Favorites only'],
       'toolbar.info': ['信息', 'Info'],
       'toolbar.settings': ['显示设置', 'View options'],
@@ -278,6 +278,12 @@ window.__ModuleLoader__.load({
       const port = host.port ? `:${host.port}` : ''
       const user = host.user ? `${host.user}@` : ''
       return `${user}${target}${port}`
+    }
+
+    // Table / session chrome shows only the hostname (the name column already
+    // carries the alias); the full user@host:port stays in titles and copy.
+    function hostTarget(host) {
+      return host.hostname || host.host
     }
 
     function hostGroupKey(host) {
@@ -1048,7 +1054,7 @@ window.__ModuleLoader__.load({
         }
         let result = 0
         if (sort.key === 'system') result = String(a.system ?? '').localeCompare(String(b.system ?? ''))
-        else if (sort.key === 'address') result = hostAddress(a).localeCompare(hostAddress(b))
+        else if (sort.key === 'address') result = hostTarget(a).localeCompare(hostTarget(b))
         else if (sort.key === 'notes') result = String(a.note ?? '').localeCompare(String(b.note ?? ''))
         else result = hostName(a).localeCompare(hostName(b), undefined, { numeric: true, sensitivity: 'base' })
         if (result === 0) result = a.host.localeCompare(b.host)
@@ -1068,10 +1074,10 @@ window.__ModuleLoader__.load({
     }
 
     function tableTracks(prefs) {
-      const tracks = ['32px', '112px', '92px', 'minmax(0,1.1fr)', 'minmax(0,1.2fr)']
-      if (prefs.info) tracks.push('minmax(250px,1.5fr)')
-      if (prefs.notes) tracks.push('minmax(0,0.9fr)')
-      tracks.push('176px', '32px')
+      const tracks = ['32px', '96px', '80px', 'minmax(90px,1fr)', 'minmax(150px,1.25fr)']
+      if (prefs.info) tracks.push('minmax(210px,1.4fr)')
+      if (prefs.notes) tracks.push('minmax(120px,0.8fr)')
+      tracks.push('150px', '28px')
       return tracks.join(' ')
     }
 
@@ -2394,7 +2400,7 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'ssh-cell ssh-colAddress' },
-          h('span', { className: 'ssh-address', title: hostAddress(host) }, hostAddress(host)),
+          h('span', { className: 'ssh-address', title: hostAddress(host) }, hostTarget(host)),
           h(
             'span',
             { className: 'ssh-inlineActions' },
@@ -2503,9 +2509,11 @@ window.__ModuleLoader__.load({
         observer.observe(node)
         return () => observer.disconnect()
       }, [])
+      const hasInfo = visible.some((host) => Boolean(host.system || host.cpuCores || host.memoryGB || host.diskGB))
+      const hasNotes = visible.some((host) => Boolean(host.note))
       const effective = {
-        info: columns.info && tableWidth >= 860,
-        notes: columns.notes && tableWidth >= 1000,
+        info: columns.info && hasInfo && tableWidth >= 900,
+        notes: columns.notes && hasNotes && tableWidth >= 1100,
       }
       const style = { gridTemplateColumns: tableTracks(effective) }
       const visibleAliases = visible.map((host) => host.host)
@@ -2741,7 +2749,7 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'ssh-sessionActions' },
             activeHost
-              ? h('span', { className: 'ssh-sessionAddress', title: hostAddress(activeHost) }, hostAddress(activeHost))
+              ? h('span', { className: 'ssh-sessionAddress', title: hostAddress(activeHost) }, hostTarget(activeHost))
               : null,
             activeCredential ? h(Badge, { tone: activeCredential.tone }, activeCredential.label) : null,
             h(
@@ -2853,7 +2861,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'ssh-drawerTitles' },
               h('div', { className: 'ssh-drawerTitle', title: hostName(host) }, hostName(host)),
-              h('div', { className: 'ssh-drawerSub' }, hostAddress(host)),
+              h('div', { className: 'ssh-drawerSub' }, hostTarget(host)),
             ),
             h(
               Badge,
@@ -4204,7 +4212,7 @@ window.__ModuleLoader__.load({
                     label: t('table.select'),
                   }),
                   h('span', { className: 'ssh-targetName' }, hostName(host)),
-                  h('span', { className: 'ssh-targetAddr' }, hostAddress(host)),
+                  h('span', { className: 'ssh-targetAddr' }, hostTarget(host)),
                   h('span', { className: 'ssh-targetCred' }, h(Badge, { tone: credential.tone }, credential.label)),
                 )
               }),

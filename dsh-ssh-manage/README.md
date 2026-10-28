@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.2.0`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.2.1`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.0
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.1
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.2.0
+dsh plugin add dsh-ssh-manage@0.2.1
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
