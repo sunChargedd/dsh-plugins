@@ -8,6 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
+[![npm](https://img.shields.io/npm/v/dsh-ssh-manage.svg)](https://www.npmjs.com/package/dsh-ssh-manage)
 [![DSH](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4E7CF6)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub](https://img.shields.io/badge/github-sunChargedd%2Fdsh--plugins-181717?logo=github)](https://github.com/sunChargedd/dsh-plugins)
 
@@ -93,18 +94,18 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ## Installation
 
-### From this repository (current method)
+### From npm (recommended)
 
-The plugin is not published to npm yet. Install it from the monorepo subdirectory:
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.1.1`).
 
 ```text
-plugin_manager action=install_bundle target=<repository>/dsh-ssh-manage
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.1.1
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add <repository>/dsh-ssh-manage
+dsh plugin add dsh-ssh-manage@0.1.1
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.

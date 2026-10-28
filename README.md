@@ -21,12 +21,12 @@
 
 ### [dsh-ssh-manage](dsh-ssh-manage/README.md)
 
-在 DSH 侧边栏管理 SSH 主机，支持密码登录、主机分组、批量命令、文件传输和**真正的交互式 PTY 终端**（xterm.js，标签页会话）。当前版本 `0.1.0`。
+在 DSH 侧边栏管理 SSH 主机，支持密码登录、主机分组、批量命令、文件传输和**真正的交互式 PTY 终端**（xterm.js，标签页会话）。当前版本 `0.1.1`。
 
 ## 安装
 
 - `dsh-mcp-skill-manage` 已发布到 npm，可在 DSH 的「插件」/「插件市场」中搜索安装。
-- `dsh-ssh-manage` 尚未发布 npm，从本仓库对应子目录本地安装/链接；npm 包名 `dsh-ssh-manage` 目前未被占用，后续可发布。
+- `dsh-ssh-manage` 已发布到 npm，可在 DSH 的「插件」/「插件市场」中搜索安装。
 
 要求：
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh-manage",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A DSH sidebar plugin for managing SSH host profiles with a real interactive PTY terminal.",
   "license": "MIT",
   "private": false,
@@ -23,7 +23,9 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "assets/*"
+    "assets/*",
+    "LICENSE",
+    "README.en.md"
   ],
   "scripts": {
     "check": "node --check index.js && node --check client.js && node --check lib/*.js && node --check scripts/test.mjs && node --check scripts/test-ws.mjs && node --check scripts/test-pty.mjs && node --check scripts/test-sse.mjs && node --check scripts/check-client.mjs && node scripts/check-client.mjs",
@@ -56,5 +58,14 @@
   "homepage": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manage#readme",
   "bugs": {
     "url": "https://github.com/sunChargedd/dsh-plugins/issues"
-  }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "ssh",
+    "terminal",
+    "xterm",
+    "sftp",
+    "hosts"
+  ]
 }

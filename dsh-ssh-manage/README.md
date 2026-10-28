@@ -8,6 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
+[![npm](https://img.shields.io/npm/v/dsh-ssh-manage.svg)](https://www.npmjs.com/package/dsh-ssh-manage)
 [![DSH](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4E7CF6)](https://github.com/deepseek-ai/deepseek-harness)
 [![GitHub](https://img.shields.io/badge/github-sunChargedd%2Fdsh--plugins-181717?logo=github)](https://github.com/sunChargedd/dsh-plugins)
 
@@ -95,18 +96,18 @@
 
 ## 安装
 
-### 从本仓库安装（当前方式）
+### 从 npm 安装（推荐）
 
-本插件尚未发布 npm，直接从 monorepo 子目录安装：
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.1.1`）。
 
 ```text
-plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.1.1
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add <仓库绝对路径>/dsh-ssh-manage
+dsh plugin add dsh-ssh-manage@0.1.1
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
