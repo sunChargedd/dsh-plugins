@@ -34,6 +34,16 @@
 - DSH >= 0.2.1-rc.3 且 < 0.3.0
 - 安装或更新插件后，Host 侧新增路由需要重启 DSH 才会生效（详见各插件 README）
 
+## 自建市场索引
+
+不想等 awesome 收录时，可把下面的索引加到 DSH 的 **设置 → 插件 → Discover → Index sources**：
+
+```text
+https://raw.githubusercontent.com/sunChargedd/dsh-plugins/main/market/index.json
+```
+
+索引同时包含 `dsh-mcp-skill-manage` 与 `dsh-ssh-manage`。
+
 ## 开发
 
 ```bash

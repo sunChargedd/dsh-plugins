@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "title": {
+    "en": "DSH Plugins",
+    "zh": "DSH 插件集"
+  },
+  "description": {
+    "en": "Two DeepSeek Harness plugins from sunChargedd: MCP & Skill Manager and SSH Manager.",
+    "zh": "sunChargedd 的两个 DeepSeek Harness 插件：MCP 与技能管理、SSH 主机管理。"
+  },
+  "metadata": {
+    "categories": {
+      "skill": {
+        "title": {
+          "en": "Skills & MCP",
+          "zh": "技能与 MCP"
+        }
+      },
+      "remote": {
+        "title": {
+          "en": "Remote Access",
+          "zh": "远程访问"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "dsh-mcp-skill-manage",
+      "title": {
+        "en": "MCP & Skill Manager",
+        "zh": "MCP 与技能管理"
+      },
+      "description": {
+        "en": "Manage agent skills and MCP servers across DSH, Claude Code, Codex, Cursor and other tools from one DSH sidebar page.",
+        "zh": "在 DSH 侧边栏统一管理 DSH、Claude Code、Codex、Cursor 等工具的 skill 与 MCP 服务器。"
+      },
+      "icon": "https://raw.githubusercontent.com/sunChargedd/dsh-mcp-skill-manage/main/icon-180.png",
+      "author": "sunChargedd",
+      "homepage": "https://github.com/sunChargedd/dsh-mcp-skill-manage#readme",
+      "repository": {
+        "url": "https://github.com/sunChargedd/dsh-mcp-skill-manage"
+      },
+      "metadata": {
+        "category": "skill",
+        "keywords": [
+          "dsh",
+          "mcp",
+          "skills",
+          "claude-code",
+          "codex",
+          "cursor"
+        ],
+        "labels": []
+      },
+      "versions": [
+        {
+          "version": "0.5.5",
+          "publishTimestamp": 1793210052,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.3.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "dsh-ssh-manage",
+      "title": {
+        "en": "SSH Manager",
+        "zh": "SSH 主机管理"
+      },
+      "description": {
+        "en": "Manage SSH hosts and open persistent interactive PTY terminals inside DeepSeek Harness, with encrypted passwords, batch commands and SFTP.",
+        "zh": "在 DSH 中管理 SSH 主机并打开可保持的交互式 PTY 终端，支持加密密码、批量命令与 SFTP。"
+      },
+      "icon": "https://raw.githubusercontent.com/sunChargedd/dsh-plugins/main/dsh-ssh-manage/icon-180.png",
+      "author": "sunChargedd",
+      "homepage": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manage#readme",
+      "repository": {
+        "url": "https://github.com/sunChargedd/dsh-plugins/tree/main/dsh-ssh-manage"
+      },
+      "metadata": {
+        "category": "remote",
+        "keywords": [
+          "dsh",
+          "ssh",
+          "terminal",
+          "pty",
+          "sftp",
+          "hosts"
+        ],
+        "labels": []
+      },
+      "versions": [
+        {
+          "version": "0.2.1",
+          "publishTimestamp": 1793210052,
+          "source": {
+            "type": "npm"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}
