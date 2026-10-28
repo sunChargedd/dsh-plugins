@@ -15,9 +15,11 @@ const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
 const PTY_OPEN_ROUTE = '/dsh-ssh-manage/pty/open'
 const PTY_INPUT_ROUTE = '/dsh-ssh-manage/pty/input'
 const PTY_RESIZE_ROUTE = '/dsh-ssh-manage/pty/resize'
+const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
 const PTY_CLOSE_ROUTE = '/dsh-ssh-manage/pty/close'
 const MAX_PTY_SESSIONS = 16
-const PTY_IDLE_MS = 30 * 60 * 1000
+const PTY_BUFFER_BYTES = 256 * 1024
+const PTY_IDLE_MS = 6 * 60 * 60 * 1000
 const MAX_PTY_BUFFER_BYTES = 4 * 1024 * 1024
 const PACKAGE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url))
 const ASSETS = [
@@ -330,11 +332,18 @@ async function openTextSession(paths, payload) {
       try { session.close() } catch {}
       throw new Error('Terminal session already exists')
     }
-    const entry = { id, session, cols, rows, lastActivity: Date.now() }
+    const entry = { id, session, cols, rows, lastActivity: Date.now(), seq: 0, buffer: [], bufferBytes: 0 }
     ptyTextSessions.set(id, entry)
     session.stream.on('data', (chunk) => {
       entry.lastActivity = Date.now()
-      broadcastPty({ kind: 'output', id, data: chunk.toString('base64') })
+      const copy = Buffer.from(chunk)
+      entry.seq += 1
+      entry.buffer.push(copy)
+      entry.bufferBytes += copy.length
+      while (entry.bufferBytes > PTY_BUFFER_BYTES && entry.buffer.length > 0) {
+        entry.bufferBytes -= entry.buffer.shift().length
+      }
+      broadcastPty({ kind: 'output', id, seq: entry.seq, data: copy.toString('base64') })
     })
     session.stream.on('close', () => {
       closeTextSession(id)
@@ -347,7 +356,7 @@ async function openTextSession(paths, payload) {
       closeTextSession(id, false)
       broadcastPty({ kind: 'error', id, message: errorMessage(error) })
     })
-    return { id, cols, rows }
+    return { id, seq: 0, cols, rows, output: '' }
   } finally {
     ptyPendingIds.delete(id)
     ptyOpening -= 1
@@ -422,6 +431,42 @@ function registerPtyHttpRoutes(ctx, paths) {
       },
     },
     'pty open route',
+  )
+
+  register(
+    {
+      kind: 'exact',
+      path: PTY_ATTACH_ROUTE,
+      handler: async (req, res) => {
+        if (rejectUnauthenticated(ctx, req, res)) return
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.end()
+          return
+        }
+        const body = (await readJsonBody(req)) ?? {}
+        const id = typeof body.id === 'string' ? body.id : ''
+        const entry = ptyTextSessions.get(id)
+        if (!entry) {
+          sendJson(res, 200, { ok: false, error: { code: 'pty-session-missing', message: 'Terminal session was not found' } })
+          return
+        }
+        try {
+          entry.lastActivity = Date.now()
+          entry.cols = boundedInteger(body.cols, 20, 500, entry.cols)
+          entry.rows = boundedInteger(body.rows, 5, 300, entry.rows)
+          entry.session.stream.setWindow(entry.rows, entry.cols, 0, 0)
+          const output = Buffer.concat(entry.buffer, entry.bufferBytes).toString('base64')
+          sendJson(res, 200, {
+            ok: true,
+            value: { id, seq: entry.seq, cols: entry.cols, rows: entry.rows, output },
+          })
+        } catch (error) {
+          sendJson(res, 200, { ok: false, error: { code: 'pty-attach-failed', message: errorMessage(error) } })
+        }
+      },
+    },
+    'pty attach route',
   )
 
   for (const [path, action, label] of [
@@ -669,7 +714,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, MAX_PTY_SESSIONS, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 

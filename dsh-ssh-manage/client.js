@@ -26,6 +26,7 @@ window.__ModuleLoader__.load({
       'app.configFile': ['配置文件', 'Config file'],
       'app.copyConfig': ['复制配置路径', 'Copy config path'],
       'toolbar.collapse': ['收起', 'Collapse'],
+      'toolbar.resize': ['拖动调整分组栏宽度，双击恢复默认', 'Drag to resize the group sidebar; double-click to reset'],
       'toolbar.expand': ['展开', 'Expand'],
       'toolbar.refresh': ['刷新', 'Refresh'],
       'toolbar.groups': ['分组', 'Groups'],
@@ -1068,7 +1069,7 @@ window.__ModuleLoader__.load({
 
     function tableTracks(prefs) {
       const tracks = ['32px', '112px', '92px', 'minmax(0,1.1fr)', 'minmax(0,1.2fr)']
-      if (prefs.info) tracks.push('minmax(0,1.5fr)')
+      if (prefs.info) tracks.push('minmax(250px,1.5fr)')
       if (prefs.notes) tracks.push('minmax(0,0.9fr)')
       tracks.push('176px', '32px')
       return tracks.join(' ')
@@ -1093,6 +1094,48 @@ window.__ModuleLoader__.load({
     // App
     // ---------------------------------------------------------------------
 
+    // Survives the plugin panel unmounting when the user switches to another
+    // DSH session (and a client-module reload). Host-side PTYs stay alive;
+    // mounting again attaches to them and replays recent output.
+    const PANEL_STATE_KEY = 'dsh-ssh-manage:panel-state'
+    const TREE_WIDTH_KEY = 'dsh-ssh-manage:tree-width'
+
+    function readPanelState() {
+      try {
+        const parsed = JSON.parse(String(window.sessionStorage.getItem(PANEL_STATE_KEY) ?? 'null'))
+        if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.sessions)) {
+          return { sessions: [], activeSessionId: null, tab: 'hosts' }
+        }
+        const sessions = parsed.sessions
+          .filter((session) => session && typeof session.id === 'string' && typeof session.hostAlias === 'string')
+          .map((session) => ({ id: session.id, hostAlias: session.hostAlias }))
+        const tab = ['hosts', 'sessions', 'batch', 'settings'].includes(parsed.tab) ? parsed.tab : 'hosts'
+        const activeSessionId = typeof parsed.activeSessionId === 'string' ? parsed.activeSessionId : null
+        return { sessions, activeSessionId, tab }
+      } catch {
+        return { sessions: [], activeSessionId: null, tab: 'hosts' }
+      }
+    }
+
+    const persistentPanelState = readPanelState()
+    const TREE_MIN_WIDTH = 220
+    const TREE_MAX_WIDTH = 560
+
+    function clampTreeWidth(value) {
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) return 300
+      return Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, Math.round(numeric)))
+    }
+
+    function readTreeWidth() {
+      try {
+        const stored = window.localStorage.getItem(TREE_WIDTH_KEY)
+        return stored === null ? 300 : clampTreeWidth(stored)
+      } catch {
+        return 300
+      }
+    }
+
     function App({ ctx }) {
       const t = useT(ctx)
       const localeId = useLocaleId(ctx)
@@ -1100,7 +1143,11 @@ window.__ModuleLoader__.load({
       const [loading, setLoading] = React.useState(true)
       const [refreshing, setRefreshing] = React.useState(false)
       const [error, setError] = React.useState('')
-      const [tab, setTab] = React.useState('hosts')
+      const [tab, setTab] = React.useState(() => {
+        const saved = persistentPanelState.tab
+        if (saved === 'sessions' && persistentPanelState.sessions.length === 0) return 'hosts'
+        return ['hosts', 'sessions', 'batch', 'settings'].includes(saved) ? saved : 'hosts'
+      })
       const [filter, setFilter] = React.useState('')
       const [favoriteOnly, setFavoriteOnly] = React.useState(false)
       const [groupFilter, setGroupFilter] = React.useState(null)
@@ -1119,12 +1166,14 @@ window.__ModuleLoader__.load({
       const [pending, setPending] = React.useState({})
       const [sort, setSort] = React.useState({ key: 'name', dir: 'asc' })
       const [columns, setColumns] = React.useState({ info: true, notes: true, compact: false })
-      const [sessions, setSessions] = React.useState([])
-      const [activeSessionId, setActiveSessionId] = React.useState(null)
+      const [sessions, setSessions] = React.useState(() =>
+        persistentPanelState.sessions.map((session) => ({ id: session.id, hostAlias: session.hostAlias })),
+      )
+      const [activeSessionId, setActiveSessionId] = React.useState(() => persistentPanelState.activeSessionId)
+      const [treeWidth, setTreeWidth] = React.useState(readTreeWidth)
       const [clearSignals, setClearSignals] = React.useState({})
       const toastTimer = React.useRef(null)
       const floatingRef = React.useRef(null)
-      const sessionCounter = React.useRef(0)
 
       const notify = React.useCallback((message, tone = 'info') => {
         if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -1138,6 +1187,25 @@ window.__ModuleLoader__.load({
         },
         [],
       )
+
+      React.useEffect(() => {
+        persistentPanelState.sessions = sessions.map((session) => ({ id: session.id, hostAlias: session.hostAlias }))
+        persistentPanelState.activeSessionId = activeSessionId
+        persistentPanelState.tab = tab
+        try {
+          window.sessionStorage.setItem(PANEL_STATE_KEY, JSON.stringify(persistentPanelState))
+        } catch {}
+      }, [sessions, activeSessionId, tab])
+
+      React.useEffect(() => {
+        try {
+          window.localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth))
+        } catch {}
+      }, [treeWidth])
+
+      React.useEffect(() => {
+        for (const session of sessions) ptyActiveIds.add(session.id)
+      }, [sessions])
 
       const applySnapshot = React.useCallback((next) => {
         if (!next) return
@@ -1217,8 +1285,11 @@ window.__ModuleLoader__.load({
         if (!snapshot) return
         const aliases = new Set(hosts.map((host) => host.host))
         setSessions((prev) => {
+          const removed = prev.filter((session) => !aliases.has(session.hostAlias))
           const next = prev.filter((session) => aliases.has(session.hostAlias))
-          return next.length === prev.length ? prev : next
+          if (removed.length === 0) return prev
+          for (const session of removed) closePtySession(session.id)
+          return next
         })
       }, [hosts, snapshot])
 
@@ -1298,8 +1369,8 @@ window.__ModuleLoader__.load({
         if (existing) {
           setActiveSessionId(existing.id)
         } else {
-          sessionCounter.current += 1
-          const id = `ssh-session-${Date.now()}-${sessionCounter.current}`
+          const id = newPtySessionId()
+          ptyActiveIds.add(id)
           setSessions((prev) => [...prev, { id, hostAlias: host.host }])
           setActiveSessionId(id)
         }
@@ -1309,6 +1380,7 @@ window.__ModuleLoader__.load({
       function closeSession(id) {
         const index = sessions.findIndex((session) => session.id === id)
         if (index < 0) return
+        closePtySession(id)
         const next = sessions.filter((session) => session.id !== id)
         setSessions(next)
         setClearSignals((prev) => {
@@ -1602,6 +1674,8 @@ window.__ModuleLoader__.load({
         setFloating,
         setEditor,
         setDrawer,
+        treeWidth,
+        setTreeWidth,
         sessions,
         activeSessionId,
         setActiveSessionId,
@@ -2498,10 +2572,55 @@ window.__ModuleLoader__.load({
     }
 
     function HostsTab({ model }) {
+      const { t } = model
+      const beginResize = (event) => {
+        if (!model.sidebarOpen || event.button !== 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        const startX = event.clientX
+        const startWidth = model.treeWidth
+        document.body.classList.add('ssh-col-resizing')
+        const onMove = (moveEvent) => {
+          model.setTreeWidth(clampTreeWidth(startWidth + moveEvent.clientX - startX))
+        }
+        const onUp = () => {
+          document.body.classList.remove('ssh-col-resizing')
+          window.removeEventListener('pointermove', onMove)
+          window.removeEventListener('pointerup', onUp)
+          window.removeEventListener('pointercancel', onUp)
+        }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onUp)
+      }
+      const nudgeWidth = (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        model.setTreeWidth(clampTreeWidth(model.treeWidth + (event.key === 'ArrowLeft' ? -20 : 20)))
+      }
       return h(
         'div',
-        { className: cx('ssh-body', !model.sidebarOpen && 'collapsed') },
+        {
+          className: cx('ssh-body', !model.sidebarOpen && 'collapsed'),
+          style: { '--ssh-tree-width': `${model.treeWidth}px` },
+        },
         h(Sidebar, { model }),
+        model.sidebarOpen
+          ? h('div', {
+              className: 'ssh-treeResizer',
+              role: 'separator',
+              tabIndex: 0,
+              'aria-orientation': 'vertical',
+              'aria-label': t('toolbar.resize'),
+              'aria-valuemin': TREE_MIN_WIDTH,
+              'aria-valuemax': TREE_MAX_WIDTH,
+              'aria-valuenow': model.treeWidth,
+              title: t('toolbar.resize'),
+              onPointerDown: beginResize,
+              onKeyDown: nudgeWidth,
+              onDoubleClick: () => model.setTreeWidth(300),
+            })
+          : null,
         model.sidebarOpen ? h('div', { className: 'ssh-sideScrim', onClick: () => model.setSidebarOpen(false) }) : null,
         h(
           'main',
@@ -2913,9 +3032,25 @@ window.__ModuleLoader__.load({
     }
 
     const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
+    const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
     const ptyStream = { source: null, ready: false, promise: null, listeners: new Map() }
     const ptyActiveIds = new Set()
+    const ptyClosedIds = new Set()
     const ptyStreamLostHandlers = new Set()
+
+    function closePtySession(id) {
+      if (!id) return
+      ptyClosedIds.add(id)
+      ptyActiveIds.delete(id)
+      try {
+        void fetch('/dsh-ssh-manage/pty/close', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ id }),
+          keepalive: true,
+        })
+      } catch {}
+    }
 
     function onPtyStreamLost(handler) {
       ptyStreamLostHandlers.add(handler)
@@ -2932,17 +3067,6 @@ window.__ModuleLoader__.load({
       for (const handler of [...ptyStreamLostHandlers]) {
         try { handler() } catch {}
       }
-    }
-
-    if (typeof window !== 'undefined') {
-      window.addEventListener('pagehide', () => {
-        for (const id of ptyActiveIds) {
-          try {
-            navigator.sendBeacon('/dsh-ssh-manage/pty/close', new Blob([JSON.stringify({ id })], { type: 'application/json' }))
-          } catch {}
-        }
-        ptyActiveIds.clear()
-      })
     }
 
     function subscribePty(id, listener) {
@@ -3043,7 +3167,6 @@ window.__ModuleLoader__.load({
       const containerRef = React.useRef(null)
       const termRef = React.useRef(null)
       const fitRef = React.useRef(null)
-      const sessionIdRef = React.useRef(null)
       const activeRef = React.useRef(active === true)
       const [status, setStatus] = React.useState('loading')
       const [message, setMessage] = React.useState('')
@@ -3099,24 +3222,7 @@ window.__ModuleLoader__.load({
             unsubscribe()
             unsubscribe = null
           }
-          const id = sessionKey
           sessionKey = null
-          sessionIdRef.current = null
-          if (id) {
-            ptyActiveIds.delete(id)
-            postClose(id)
-          }
-        }
-
-        const postClose = (id) => {
-          try {
-            void fetch('/dsh-ssh-manage/pty/close', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ id }),
-              keepalive: true,
-            })
-          } catch {}
         }
 
         const failSession = (error) => {
@@ -3207,42 +3313,83 @@ window.__ModuleLoader__.load({
             return
           }
           if (removed) return
-          sessionKey = newPtySessionId()
-          sessionIdRef.current = sessionKey
-          ptyActiveIds.add(sessionKey)
-          unsubscribe = subscribePty(sessionKey, (event) => {
-            if (removed) return
+          sessionKey = sessionId
+          const id = sessionKey
+          let synced = false
+          let lastSeq = 0
+          const pendingEvents = []
+
+          const applyOutput = (event) => {
+            const seq = Number(event.seq)
+            if (Number.isFinite(seq)) {
+              if (seq <= lastSeq) return
+              lastSeq = seq
+            }
+            try { term.write(decodeBase64(event.data)) } catch {}
+          }
+
+          const handleEvent = (event) => {
             if (event.kind === 'output') {
-              try { term.write(decodeBase64(event.data)) } catch {}
+              if (!synced) pendingEvents.push(event)
+              else applyOutput(event)
             } else if (event.kind === 'exit') {
+              if (!synced) {
+                pendingEvents.push(event)
+                return
+              }
               finished = true
               setStatus('closed')
               setMessage(t('terminal.exited'))
               teardown()
             } else if (event.kind === 'error') {
+              if (!synced) {
+                pendingEvents.push(event)
+                return
+              }
               finished = true
               setStatus('error')
               setMessage(String(event.message ?? t('terminal.failed')))
               teardown()
             }
+          }
+
+          unsubscribe = subscribePty(id, (event) => {
+            if (removed) return
+            handleEvent(event)
           })
           let dims = { cols: 80, rows: 24 }
           try {
             const proposed = fit?.proposeDimensions?.()
             if (proposed && proposed.cols > 0 && proposed.rows > 0) dims = proposed
           } catch {}
-          const openedId = sessionKey
           try {
-            await ptyPost('/dsh-ssh-manage/pty/open', {
-              id: openedId,
-              host: hostRef.current.host,
-              cols: dims.cols,
-              rows: dims.rows,
-            }, 40_000)
-            if (removed || finished) {
-              postClose(openedId)
+            let value
+            try {
+              value = await ptyPost(PTY_ATTACH_ROUTE, { id, cols: dims.cols, rows: dims.rows }, 15_000)
+            } catch {
+              value = await ptyPost('/dsh-ssh-manage/pty/open', {
+                id,
+                host: hostRef.current.host,
+                cols: dims.cols,
+                rows: dims.rows,
+              }, 40_000)
+            }
+            if (ptyClosedIds.has(id)) {
+              closePtySession(id)
               return
             }
+            if (removed) return
+            if (value && value.output) {
+              try { term.write(decodeBase64(value.output)) } catch {}
+            }
+            const seq = Number(value?.seq)
+            if (Number.isFinite(seq)) lastSeq = seq
+            synced = true
+            for (const event of pendingEvents.splice(0)) {
+              if (finished) break
+              handleEvent(event)
+            }
+            if (finished) return
             opened = true
             setStatus('ready')
             setMessage('')
@@ -4283,8 +4430,13 @@ window.__ModuleLoader__.load({
 .ssh-errorBar{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:.5px solid var(--ssh-border);color:var(--ssh-danger);font-size:11.5px;background:color-mix(in srgb,var(--ssh-danger) 7%,var(--ssh-bg))}
 .ssh-errorText{flex:1;min-width:0}
 .ssh-loadingPage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--ssh-text-3);font-size:12.5px;padding:40px}
-.ssh-body{flex:1;min-height:0;display:grid;grid-template-columns:300px minmax(0,1fr);position:relative;overflow:hidden}
+.ssh-body{flex:1;min-height:0;display:grid;grid-template-columns:var(--ssh-tree-width,300px) minmax(0,1fr);position:relative;overflow:hidden}
 .ssh-body.collapsed{grid-template-columns:0 minmax(0,1fr)}
+.ssh-treeResizer{position:absolute;top:0;bottom:0;left:var(--ssh-tree-width,300px);width:10px;transform:translateX(-5px);z-index:26;cursor:col-resize;touch-action:none;outline:none}
+.ssh-treeResizer::after{content:"";position:absolute;top:0;bottom:0;left:4px;width:1px;background:transparent;transition:background .12s ease}
+.ssh-treeResizer:hover::after,.ssh-treeResizer:focus-visible::after{background:var(--ssh-brand);box-shadow:0 0 0 1px color-mix(in srgb,var(--ssh-brand) 35%,transparent)}
+.ssh-body.collapsed .ssh-treeResizer{display:none}
+body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-select:none!important}
 .ssh-sidebar{display:flex;flex-direction:column;min-height:0;border-right:.5px solid var(--ssh-border);background:var(--ssh-bg)}
 .ssh-body.collapsed .ssh-sidebar{display:none}
 .ssh-sideScrim{display:none}
@@ -4369,8 +4521,8 @@ window.__ModuleLoader__.load({
 .ssh-row:hover .ssh-inlineActions{opacity:1}
 .ssh-miniBtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--ssh-text-3);cursor:pointer}
 .ssh-miniBtn:hover{background:var(--ssh-hover);color:var(--ssh-text)}
-.ssh-colInfo{gap:4px;flex-wrap:nowrap;overflow:hidden}
-.ssh-chip{display:inline-flex;align-items:center;height:21px;max-width:100%;padding:0 7px;border-radius:6px;border:.5px solid var(--ssh-border);background:var(--ssh-layer-3);font-size:10.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssh-colInfo{gap:4px;row-gap:3px;flex-wrap:wrap;align-content:center;overflow:visible}
+.ssh-chip{display:inline-flex;flex:0 0 auto;align-items:center;height:21px;max-width:100%;padding:0 7px;border-radius:6px;border:.5px solid var(--ssh-border);background:var(--ssh-layer-3);font-size:10.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ssh-mutedText{font-size:11.5px;color:var(--ssh-dim)}
 .ssh-colNotes{min-width:0}
 .ssh-noteText{font-size:11.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -4620,6 +4772,7 @@ window.__ModuleLoader__.load({
 .ssh-tree::-webkit-scrollbar-thumb:hover,.ssh-tableScroll::-webkit-scrollbar-thumb:hover,.ssh-details::-webkit-scrollbar-thumb:hover,.ssh-terminalLog::-webkit-scrollbar-thumb:hover,.ssh-fileList::-webkit-scrollbar-thumb:hover,.ssh-page::-webkit-scrollbar-thumb:hover,.ssh-modalBody::-webkit-scrollbar-thumb:hover,.ssh-floating::-webkit-scrollbar-thumb:hover,.ssh-targetList::-webkit-scrollbar-thumb:hover{background:var(--dsw-alias-scrollbar-hover-l1,var(--ssh-border-strong));border:2px solid transparent;background-clip:padding-box}
 @media (max-width: 900px){
 .ssh-body{grid-template-columns:minmax(0,1fr)}
+.ssh-treeResizer{display:none}
 .ssh-sidebar{position:absolute;top:0;bottom:0;left:0;width:290px;z-index:25;display:none;box-shadow:var(--ssh-shadow)}
 .ssh-sidebar.open{display:flex}
 .ssh-body:not(.collapsed) .ssh-sideScrim{display:block;position:absolute;inset:0;z-index:20;background:color-mix(in srgb,var(--ssh-bg) 45%,transparent)}

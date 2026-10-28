@@ -149,10 +149,11 @@ try {
   const route = (routePath) => routes.find((entry) => entry.path === routePath)
   const eventsRoute = route(__test.PTY_EVENTS_ROUTE)
   const openRoute = route(__test.PTY_OPEN_ROUTE)
+  const attachRoute = route(__test.PTY_ATTACH_ROUTE)
   const inputRoute = route(__test.PTY_INPUT_ROUTE)
   const resizeRoute = route(__test.PTY_RESIZE_ROUTE)
   const closeRoute = route(__test.PTY_CLOSE_ROUTE)
-  assert.ok(eventsRoute && openRoute && inputRoute && resizeRoute && closeRoute)
+  assert.ok(eventsRoute && openRoute && attachRoute && inputRoute && resizeRoute && closeRoute)
 
   const sse = new FakeResponse()
   await eventsRoute.handler(fakeRequest('GET'), sse)
@@ -179,12 +180,30 @@ try {
   const scan = await waitForSse(sse, (event) => event.kind === 'output' && decode(event).includes('scan -> pty 100x30'))
   assert.ok(scan)
 
+  // Simulate the plugin panel going away: drop the SSE client, keep the PTY
+  // alive on the Host, then attach from a fresh stream and replay output.
+  sse.emit('close')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const attachResponse = new FakeResponse()
+  await attachRoute.handler(fakeRequest('POST', { id: 'pty-sse-test', cols: 120, rows: 40 }), attachResponse)
+  const attached = JSON.parse(attachResponse.body.toString())
+  assert.equal(attached.ok, true)
+  assert.ok(attached.value.seq > 0)
+  const replay = Buffer.from(String(attached.value.output ?? ''), 'base64').toString('utf8')
+  assert.ok(replay.includes('fake-shell$'))
+  assert.ok(replay.includes('scan -> pty 100x30'))
+  const reattachedSse = new FakeResponse()
+  await eventsRoute.handler(fakeRequest('GET'), reattachedSse)
+  const afterAttach = new FakeResponse()
+  await inputRoute.handler(fakeRequest('POST', { id: 'pty-sse-test', data: 'again\r' }), afterAttach)
+  await waitForSse(reattachedSse, (event) => event.kind === 'output' && decode(event).includes('again -> pty 120x40'))
+
   const closeResponse = new FakeResponse()
   await closeRoute.handler(fakeRequest('POST', { id: 'pty-sse-test' }), closeResponse)
   assert.equal(JSON.parse(closeResponse.body.toString()).ok, true)
-  await waitForSse(sse, (event) => event.kind === 'exit' && event.id === 'pty-sse-test')
-  sse.emit('close')
-  console.log('ok - HTTP/SSE PTY transport end-to-end against mock ssh server (open/ready/input/resize/close)')
+  await waitForSse(reattachedSse, (event) => event.kind === 'exit' && event.id === 'pty-sse-test')
+  reattachedSse.emit('close')
+  console.log('ok - HTTP/SSE PTY transport end-to-end against mock ssh server (open/ready/input/resize/attach-replay/close)')
 
   const deniedRoutes = []
   const deniedCtx = {

@@ -34,7 +34,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 
 ### Host management
 
-- Group tree on the left, host table on the right: search, filter by group, favorite, tags, notes, connection state and latency.
+- Group tree on the left, host table on the right: search, filter by group, favorite, tags, notes, connection state and latency. Drag the divider to resize the group sidebar (double-click resets; the width is remembered).
 - Create, edit, rename and delete hosts; renaming migrates group, tags, favorites, notes, inspection data and the saved password.
 - Configurable table columns (info / notes / compact rows), responsive on narrow screens.
 - Host details drawer: address, user, port, group, tags, notes, distro, CPU, memory, disk, latency, plus "Test connection" and "Inspect".
@@ -44,7 +44,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 ### Interactive terminal
 
 - Click "Connect" to open a real PTY shell, not a one-command-at-a-time console.
-- Multiple hosts stay as tabs inside the plugin page; switching tabs keeps output, closing a tab ends that session.
+- Multiple hosts stay as tabs: switching to another DSH session and coming back re-attaches to the existing shell and replays roughly the last 256 KB of output; only closing the tab ends the session.
 - xterm.js 6.0.0 rendering with 256 colors, cursor, scrollback, selection copy, paste and resize.
 - Terminal theme follows the DSH light/dark theme; the session bar has quick actions for address, password status, test, files, details, clear and close.
 - Output is streamed over a same-origin HTTP/SSE connection; input, resize and close use same-origin HTTP POST. A tested WebSocket channel is kept as a fallback.
@@ -96,16 +96,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.1.1`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.2.0`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.1.1
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.0
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.1.1
+dsh plugin add dsh-ssh-manage@0.2.0
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -216,7 +216,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`) and 
 ## Known limitations
 
 - **Host key verification** is not implemented; ssh2 accepts the server-provided key. Use trusted networks only.
-- **Session lifetime**: terminal sessions live in plugin page memory and reset when leaving the SSH panel, refreshing the page or HMR; page close sends best-effort close notifications, and orphaned sessions are cleaned up by the idle reaper.
+- **Session lifetime**: sessions are kept on the Host; switching to another DSH session, temporarily leaving the panel, or refreshing the page re-attaches to the existing shell and replays roughly the last 256 KB of output. Only closing the tab or exiting the Host process ends them; orphaned sessions are reaped after 6 hours of inactivity (max 16 sessions).
 - **Password auth only**: IdentityFile / SSH agent / ProxyJump are not used for transport; those config fields are preserved but ignored. ProxyJump hosts fail with a clear error.
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
