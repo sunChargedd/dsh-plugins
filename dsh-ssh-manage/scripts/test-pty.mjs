@@ -41,9 +41,12 @@ function parseServerFrames(buffer) {
 }
 
 const keys = utils.generateKeyPairSync('ed25519')
+let authAttempts = 0
 const shellStates = []
 const server = new Server({ hostKeys: [keys.private] }, (client) => {
+  client.on('error', () => {})
   client.on('authentication', (ctx) => {
+    authAttempts += 1
     if (ctx.method === 'password' && ctx.username === 'tester' && ctx.password === 'secret') ctx.accept()
     else ctx.reject()
   })
@@ -75,16 +78,35 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const port = server.address().port
 const temp = await mkdtemp(path.join(os.tmpdir(), 'ssh-pty-test-'))
 const paths = { configPath: path.join(temp, 'config'), backupDir: path.join(temp, 'backups'), stateDir: path.join(temp, 'state') }
+const savedEnv = {
+  SSH_KNOWN_HOSTS: process.env.SSH_KNOWN_HOSTS,
+  DSH_SSH_MANAGER_INSECURE_HOSTKEY: process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY,
+}
 try {
   await mkdir(temp, { recursive: true })
   await writeFile(paths.configPath, `Host local\n  HostName 127.0.0.1\n  User tester\n  Port ${port}\n`, 'utf8')
+  const publicParts = String(keys.public).trim().split(/\s+/)
+  const wrongKeys = utils.generateKeyPairSync('ed25519')
+  const wrongParts = String(wrongKeys.public).trim().split(/\s+/)
+  const knownHostsFile = path.join(temp, 'known_hosts')
+  const wrongHostsFile = path.join(temp, 'known_hosts.wrong')
+  const emptyHostsFile = path.join(temp, 'known_hosts.empty')
+  await writeFile(knownHostsFile, `[127.0.0.1]:${port} ${publicParts[0]} ${publicParts[1]}\n`, 'utf8')
+  await writeFile(wrongHostsFile, `[127.0.0.1]:${port} ${wrongParts[0]} ${wrongParts[1]}\n`, 'utf8')
+  await writeFile(emptyHostsFile, '# no host keys\n', 'utf8')
+  process.env.SSH_KNOWN_HOSTS = knownHostsFile
+  delete process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY
   await setPassword(paths, 'local', 'secret')
-  const socket = new FakeSocket()
+
   const ctx = { get: () => ({ requestRejection: () => undefined }) }
-  await __test.handlePtyUpgrade(ctx, paths, { headers: { upgrade: 'websocket', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13' } }, socket, Buffer.alloc(0))
-  // wait for handshake then send open
-  const waitFor = async (predicate, timeout=5000) => {
-    const started=Date.now()
+  const upgradeRequest = { headers: { upgrade: 'websocket', 'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13' } }
+  const connectSocket = async () => {
+    const socket = new FakeSocket()
+    await __test.handlePtyUpgrade(ctx, paths, upgradeRequest, socket, Buffer.alloc(0))
+    return socket
+  }
+  const waitFor = async (socket, predicate, timeout = 5000) => {
+    const started = Date.now()
     while (Date.now()-started < timeout) {
       const raw = Buffer.concat(socket.chunks)
       const boundary = raw.indexOf('\r\n\r\n')
@@ -95,22 +117,58 @@ try {
     }
     throw new Error('timeout waiting for frame')
   }
+
+  const socket = await connectSocket()
   socket.emit('data', clientFrame(1, JSON.stringify({type:'open', host:'local', cols:80, rows:24})))
-  let frame = await waitFor(f=>f.opcode===1 && JSON.parse(f.payload.toString()).type==='ready')
+  let frame = await waitFor(socket, f=>f.opcode===1 && JSON.parse(f.payload.toString()).type==='ready')
   const ready = JSON.parse(frame.payload.toString())
   assert.equal(ready.type,'ready')
   socket.emit('data', clientFrame(1, JSON.stringify({type:'input', data:'uptime\r'})))
-  frame = await waitFor(f=>f.opcode===2 && f.payload.toString().includes('uptime -> pty 80x24'))
+  frame = await waitFor(socket, f=>f.opcode===2 && f.payload.toString().includes('uptime -> pty 80x24'))
   assert.ok(frame.payload.toString().includes('uptime -> pty 80x24'))
   socket.emit('data', clientFrame(1, JSON.stringify({type:'resize', cols:100, rows:30})))
   await new Promise(r=>setTimeout(r,100))
   socket.emit('data', clientFrame(1, JSON.stringify({type:'input', data:'scan\r'})))
-  frame = await waitFor(f=>f.opcode===2 && f.payload.toString().includes('scan -> pty 100x30'))
+  frame = await waitFor(socket, f=>f.opcode===2 && f.payload.toString().includes('scan -> pty 100x30'))
   assert.ok(frame.payload.toString().includes('scan -> pty 100x30'))
   socket.emit('data', clientFrame(1, JSON.stringify({type:'close'})))
   await new Promise(r=>setTimeout(r,100))
-  console.log('ok - PTY websocket end-to-end against mock ssh server (ready/input/resize/close)')
+  console.log('ok - PTY websocket end-to-end against mock ssh server with known_hosts verification (ready/input/resize/close)')
+
+  // A mismatched or unknown host key is refused before authentication ever starts.
+  const authsBeforeKeyChecks = authAttempts
+  process.env.SSH_KNOWN_HOSTS = wrongHostsFile
+  const mismatchSocket = await connectSocket()
+  mismatchSocket.emit('data', clientFrame(1, JSON.stringify({type:'open', host:'local', cols:80, rows:24})))
+  const mismatchFrame = await waitFor(mismatchSocket, f=>f.opcode===1 && JSON.parse(f.payload.toString()).type==='error')
+  const mismatch = JSON.parse(mismatchFrame.payload.toString())
+  assert.match(mismatch.message, /Host key verification failed for "local"/)
+  assert.match(mismatch.message, /mismatch/i)
+  assert.match(mismatch.message, /SHA256:/)
+  process.env.SSH_KNOWN_HOSTS = emptyHostsFile
+  const unknownSocket = await connectSocket()
+  unknownSocket.emit('data', clientFrame(1, JSON.stringify({type:'open', host:'local', cols:80, rows:24})))
+  const unknownFrame = await waitFor(unknownSocket, f=>f.opcode===1 && JSON.parse(f.payload.toString()).type==='error')
+  const unknown = JSON.parse(unknownFrame.payload.toString())
+  assert.match(unknown.message, /not in known_hosts/)
+  assert.match(unknown.message, /SHA256:/)
+  assert.equal(authAttempts, authsBeforeKeyChecks)
+  console.log('ok - known_hosts mismatch and unknown host keys are rejected before authentication')
+
+  // Emergency escape hatch: insecure mode accepts any host key (and authenticates).
+  process.env.SSH_KNOWN_HOSTS = wrongHostsFile
+  process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY = '1'
+  const insecureSocket = await connectSocket()
+  insecureSocket.emit('data', clientFrame(1, JSON.stringify({type:'open', host:'local', cols:80, rows:24})))
+  await waitFor(insecureSocket, f=>f.opcode===1 && JSON.parse(f.payload.toString()).type==='ready')
+  insecureSocket.emit('data', clientFrame(1, JSON.stringify({type:'close'})))
+  await new Promise(r=>setTimeout(r,100))
+  console.log('ok - DSH_SSH_MANAGER_INSECURE_HOSTKEY=1 accepts host keys as the emergency escape hatch')
 } finally {
+  for (const [key, value] of Object.entries(savedEnv)) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
   await rm(temp, { recursive: true, force: true })
   server.close()
 }

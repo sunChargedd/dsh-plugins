@@ -117,14 +117,19 @@ const paths = { configPath: path.join(temp, 'config'), backupDir: path.join(temp
 try {
   await mkdir(temp, { recursive: true })
   await writeFile(paths.configPath, `Host local\n  HostName 127.0.0.1\n  User tester\n  Port ${port}\n`, 'utf8')
+  const publicParts = String(keys.public).trim().split(/\s+/)
+  const knownHostsFile = path.join(temp, 'known_hosts')
+  await writeFile(knownHostsFile, `[127.0.0.1]:${port} ${publicParts[0]} ${publicParts[1]}\n`, 'utf8')
   await setPassword(paths, 'local', 'secret')
 
   const savedEnv = {
     SSH_CONFIG: process.env.SSH_CONFIG,
     DSH_SSH_MANAGER_HOME: process.env.DSH_SSH_MANAGER_HOME,
+    SSH_KNOWN_HOSTS: process.env.SSH_KNOWN_HOSTS,
   }
   process.env.SSH_CONFIG = paths.configPath
   process.env.DSH_SSH_MANAGER_HOME = paths.stateDir
+  process.env.SSH_KNOWN_HOSTS = knownHostsFile
   const routes = []
   const ctx = {
     effect: (callback) => {
@@ -157,7 +162,8 @@ try {
   const resizeRoute = route(__test.PTY_RESIZE_ROUTE)
   const closeRoute = route(__test.PTY_CLOSE_ROUTE)
   const clearRoute = route(__test.PTY_CLEAR_ROUTE)
-  assert.ok(eventsRoute && openRoute && attachRoute && inputRoute && resizeRoute && closeRoute && clearRoute)
+  const touchRoute = route(__test.PTY_TOUCH_ROUTE)
+  assert.ok(eventsRoute && openRoute && attachRoute && inputRoute && resizeRoute && closeRoute && clearRoute && touchRoute)
 
   const sse = new FakeResponse()
   await eventsRoute.handler(fakeRequest('GET'), sse)
@@ -245,7 +251,12 @@ try {
   await deniedOpen.handler(fakeRequest('POST', { id: 'pty-denied', host: 'local', cols: 80, rows: 24 }), deniedResponse)
   assert.equal(deniedResponse.statusCode, 401)
   assert.equal(deniedResponse.body, undefined)
-  console.log('ok - HTTP PTY routes (events and open) require an authenticated browser session')
+  const deniedTouch = deniedRoutes.find((entry) => entry.path === __test.PTY_TOUCH_ROUTE)
+  const deniedTouchResponse = new FakeResponse()
+  await deniedTouch.handler(fakeRequest('POST', { ids: [] }), deniedTouchResponse)
+  assert.equal(deniedTouchResponse.statusCode, 401)
+  assert.equal(deniedTouchResponse.body, undefined)
+  console.log('ok - HTTP PTY routes (events, open and touch) require an authenticated browser session')
 
   // A failed open must release its id so the same client id can be retried.
   const invalidOpen = new FakeResponse()
@@ -258,6 +269,28 @@ try {
   await closeRoute.handler(fakeRequest('POST', { id: 'pty-retry-test' }), retryClose)
   assert.equal(JSON.parse(retryClose.body.toString()).ok, true)
   console.log('ok - a failed PTY open releases its id so the same id can be retried')
+
+  // Heartbeat touches refresh liveness; the reaper sweeps stale sessions even with SSE clients.
+  const heartbeatOpen = new FakeResponse()
+  await openRoute.handler(fakeRequest('POST', { id: 'pty-touch-test', host: 'local', cols: 80, rows: 24 }), heartbeatOpen)
+  assert.equal(JSON.parse(heartbeatOpen.body.toString()).ok, true)
+  const heartbeatEntry = __test.ptyTextSessions.get('pty-touch-test')
+  assert.ok(heartbeatEntry)
+  heartbeatEntry.lastActivity = Date.now() - __test.PTY_IDLE_MS - 1000
+  const touchResponse = new FakeResponse()
+  await touchRoute.handler(fakeRequest('POST', { ids: ['pty-touch-test', 'missing-id'] }), touchResponse)
+  const touchedPayload = JSON.parse(touchResponse.body.toString())
+  assert.equal(touchedPayload.ok, true)
+  assert.equal(touchedPayload.value.touched, 1)
+  assert.ok(Date.now() - heartbeatEntry.lastActivity < 5000)
+  assert.equal(__test.sweepIdlePtySessions(), 0)
+  const touchGet = new FakeResponse()
+  await touchRoute.handler(fakeRequest('GET'), touchGet)
+  assert.equal(touchGet.statusCode, 405)
+  heartbeatEntry.lastActivity = Date.now() - __test.PTY_IDLE_MS - 1000
+  assert.ok(__test.sweepIdlePtySessions() >= 1)
+  assert.equal(__test.ptyTextSessions.has('pty-touch-test'), false)
+  console.log('ok - /pty/touch refreshes liveness and the idle reaper sweeps stale sessions')
 
   // Disposing the plugin while a PTY open is in flight must not leave an orphan session.
   const disposeRoutes = []

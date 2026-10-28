@@ -18,9 +18,10 @@ const PTY_RESIZE_ROUTE = '/dsh-ssh-manage/pty/resize'
 const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
 const PTY_CLOSE_ROUTE = '/dsh-ssh-manage/pty/close'
 const PTY_CLEAR_ROUTE = '/dsh-ssh-manage/pty/clear'
+const PTY_TOUCH_ROUTE = '/dsh-ssh-manage/pty/touch'
 const MAX_PTY_SESSIONS = 16
 const PTY_BUFFER_BYTES = 256 * 1024
-const PTY_IDLE_MS = 6 * 60 * 60 * 1000
+const PTY_IDLE_MS = 30 * 60 * 1000
 const MAX_PTY_BUFFER_BYTES = 4 * 1024 * 1024
 const PACKAGE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url))
 const ASSETS = [
@@ -552,18 +553,48 @@ function registerPtyHttpRoutes(ctx, paths, runtime) {
       label,
     )
   }
+
+  register(
+    {
+      kind: 'exact',
+      path: PTY_TOUCH_ROUTE,
+      handler: async (req, res) => {
+        if (rejectUnauthenticated(ctx, req, res)) return
+        if (req.method !== 'POST') {
+          res.statusCode = 405
+          res.setHeader('allow', 'POST')
+          res.end()
+          return
+        }
+        const body = (await readJsonBody(req)) ?? {}
+        const ids = Array.isArray(body.ids) ? body.ids.slice(0, 256) : []
+        const now = Date.now()
+        let touched = 0
+        for (const id of ids) {
+          if (typeof id !== 'string') continue
+          const entry = ptyTextSessions.get(id)
+          if (!entry) continue
+          entry.lastActivity = now
+          touched += 1
+        }
+        sendJson(res, 200, { ok: true, value: { touched } })
+      },
+    },
+    'pty touch route',
+  )
 }
 
-const ptyIdleTimer = setInterval(() => {
-  // An attached SSE client keeps its sessions alive even at a silent prompt;
-  // only reap orphans after every browser event stream has gone away.
-  if (ptyEventClients.size > 0) return
-  const now = Date.now()
-  for (const [id, entry] of ptyTextSessions) {
-    if (now - entry.lastActivity > PTY_IDLE_MS) closeTextSession(id)
+/** Close every PTY text session idle beyond PTY_IDLE_MS and return the number reaped. */
+function sweepIdlePtySessions(now = Date.now()) {
+  let reaped = 0
+  for (const [id, entry] of [...ptyTextSessions]) {
+    if (now - entry.lastActivity > PTY_IDLE_MS) {
+      closeTextSession(id)
+      reaped += 1
+    }
   }
-}, 60_000)
-ptyIdleTimer.unref?.()
+  return reaped
+}
 
 function boundedInteger(value, min, max, fallback) {
   const numeric = Number(value)
@@ -762,7 +793,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
@@ -772,6 +803,14 @@ export function apply(ctx) {
   }
   const paths = resolveSshPaths(process.env)
   const runtime = createPtyRuntime()
+  const runtimeIdleTimer = setInterval(() => {
+    if (!runtime.active) return
+    // Browser heartbeats (/pty/touch) keep attached sessions alive, so a session
+    // left behind by a closed tab is reclaimed even while another tab retains
+    // an SSE stream. All liveness sources refresh lastActivity.
+    sweepIdlePtySessions()
+  }, 60_000)
+  runtimeIdleTimer.unref?.()
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -857,7 +896,7 @@ export function apply(ctx) {
         try { shutdown() } catch {}
       }
       runtime.upgrades.clear()
-      clearInterval(ptyIdleTimer)
+      clearInterval(runtimeIdleTimer)
       for (const session of ptySessions) {
         try { session.close() } catch {}
       }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHmac } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -6,6 +7,7 @@ import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPat
 import { getPassword, hasPassword, listPasswordAliases, removePassword, setPassword } from '../lib/vault.js'
 import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
 import { __test as sshTest, execCommand } from '../lib/ssh-client.js'
+import { knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
 import { __test as indexTest } from '../index.js'
 
 const { normalizeEntry } = metadataTest
@@ -142,6 +144,74 @@ try {
   assert.equal(dshHomePaths.configPath, path.join('/home/demo', '.ssh', 'config'))
   assert.equal(resolveSshPaths({ HOME: '/home/demo', DSH_HOME: '/opt/dsh', DSH_SSH_MANAGER_HOME: '/custom/ssh-manager' }).stateDir, '/custom/ssh-manager')
   console.log('ok - action body cap is 16 MiB and the state dir honors DSH_HOME')
+
+  // known_hosts verification (plain, bracket, wildcard, hashed, revoked, mismatch, config).
+  const hostKeyDir = path.join(temp, 'known-hosts')
+  await mkdir(hostKeyDir, { recursive: true })
+  const hostKeyFile = path.join(hostKeyDir, 'known_hosts')
+  const hostKeyBlob = Buffer.from('dsh-ssh-manage-test-host-key-01')
+  const hostKeyBlobB64 = hostKeyBlob.toString('base64')
+  const otherHostKeyB64 = Buffer.from('dsh-ssh-manage-test-host-key-02').toString('base64')
+  const knownHostsEnv = { SSH_KNOWN_HOSTS: hostKeyFile }
+  assert.equal(knownHostsPath({ HOME: '/home/demo' }), path.join('/home/demo', '.ssh', 'known_hosts'))
+  assert.equal(knownHostsPath({ HOME: '/home/demo', SSH_KNOWN_HOSTS: '/custom/known_hosts' }), '/custom/known_hosts')
+  await writeFile(hostKeyFile, `example.com ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+  const verified = verifyHostKey({ host: 'example.com', hostname: 'example.com', port: '22' }, hostKeyBlob, knownHostsEnv)
+  assert.equal(verified.ok, true)
+  assert.match(verified.fingerprint, /^SHA256:/)
+  assert.doesNotMatch(verified.fingerprint, /=/)
+  const mismatched = verifyHostKey({ host: 'example.com', hostname: 'example.com', port: '22' }, Buffer.from('other-key'), knownHostsEnv)
+  assert.equal(mismatched.ok, false)
+  assert.match(mismatched.reason, /mismatch/)
+  assert.equal(mismatched.fingerprint, keyFingerprint(Buffer.from('other-key')))
+  assert.match(mismatched.expected, /^SHA256:/)
+  const missingFile = verifyHostKey({ host: 'example.com', hostname: 'example.com' }, hostKeyBlob, { SSH_KNOWN_HOSTS: path.join(hostKeyDir, 'missing') })
+  assert.equal(missingFile.ok, false)
+  assert.match(missingFile.reason, /missing/)
+  await writeFile(hostKeyFile, `[example.com]:2222,example.com ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+  assert.equal(verifyHostKey({ host: 'example.com', hostname: 'example.com', port: '2222' }, hostKeyBlob, knownHostsEnv).ok, true)
+  assert.equal(verifyHostKey({ host: 'example.com', hostname: 'example.com', port: '2200' }, hostKeyBlob, knownHostsEnv).ok, false)
+  await writeFile(hostKeyFile, `*.example.com ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+  assert.equal(verifyHostKey({ host: 'api.example.com', hostname: 'api.example.com' }, hostKeyBlob, knownHostsEnv).ok, true)
+  assert.equal(verifyHostKey({ host: 'example.org', hostname: 'example.org' }, hostKeyBlob, knownHostsEnv).ok, false)
+  const hashedTarget = '[example.com]:2222'
+  const hashSalt = Buffer.from('0123456789abcdef0123')
+  const hashDigest = createHmac('sha1', hashSalt).update(hashedTarget).digest()
+  await writeFile(hostKeyFile, `|1|${hashSalt.toString('base64')}|${hashDigest.toString('base64')} ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+  assert.equal(verifyHostKey({ host: 'example.com', hostname: 'example.com', port: '2222' }, hostKeyBlob, knownHostsEnv).ok, true)
+  await writeFile(hostKeyFile, `@revoked example.com ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+  const revoked = verifyHostKey({ host: 'example.com', hostname: 'example.com' }, hostKeyBlob, knownHostsEnv)
+  assert.equal(revoked.ok, false)
+  assert.match(revoked.reason, /revoked/)
+  await writeFile(hostKeyFile, `@cert-authority example.com ssh-ed25519 ${otherHostKeyB64}\n`, 'utf8')
+  const certAuthority = verifyHostKey({ host: 'example.com', hostname: 'example.com' }, hostKeyBlob, knownHostsEnv)
+  assert.equal(certAuthority.ok, false)
+  assert.match(certAuthority.reason, /not in known_hosts/)
+  const parsedKnownHosts = parseKnownHosts(`# comment\n@revoked example.com ssh-ed25519 ${otherHostKeyB64}\n[example.com]:2222,example.com ssh-rsa AAAA\n`)
+  assert.equal(parsedKnownHosts.length, 2)
+  assert.equal(parsedKnownHosts[0].marker, '@revoked')
+  assert.deepEqual(parsedKnownHosts[1].patterns, ['[example.com]:2222', 'example.com'])
+  const knownHostsConfig = sshTest.connectionConfig({ host: 'example.com', hostname: 'example.com', port: '22', user: 'demo' }, 'secret')
+  assert.equal(knownHostsConfig.keepaliveInterval, 15_000)
+  assert.equal(knownHostsConfig.keepaliveCountMax, 3)
+  assert.equal(typeof knownHostsConfig.hostVerifier, 'function')
+  const savedKnownHostsEnv = process.env.SSH_KNOWN_HOSTS
+  const savedInsecureHostKeyEnv = process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY
+  try {
+    delete process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY
+    process.env.SSH_KNOWN_HOSTS = hostKeyFile
+    await writeFile(hostKeyFile, `example.com ssh-ed25519 ${hostKeyBlobB64}\n`, 'utf8')
+    assert.equal(knownHostsConfig.hostVerifier(hostKeyBlob), true)
+    assert.equal(knownHostsConfig.hostVerifier(Buffer.from('unknown-host-key')), false)
+    process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY = '1'
+    assert.equal(knownHostsConfig.hostVerifier(Buffer.from('unknown-host-key')), true)
+  } finally {
+    if (savedKnownHostsEnv === undefined) delete process.env.SSH_KNOWN_HOSTS
+    else process.env.SSH_KNOWN_HOSTS = savedKnownHostsEnv
+    if (savedInsecureHostKeyEnv === undefined) delete process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY
+    else process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY = savedInsecureHostKeyEnv
+  }
+  console.log('ok - known_hosts parsing/matching, mismatch/revoked rejection, keepalive and insecure escape')
 
   const securePaths = { stateDir: path.join(temp, '.dsh', '.ssh-manager') }
   await setPassword(securePaths, 'local', 'correct horse battery staple')

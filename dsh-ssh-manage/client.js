@@ -18,6 +18,12 @@ window.__ModuleLoader__.load({
       'tabs.sessions': ['会话', 'Sessions'],
       'session.restoring': ['正在恢复终端会话…', 'Restoring terminal sessions…'],
       'session.tooMany': ['最多同时打开 16 个终端会话，请先关闭一个。', 'At most 16 terminal sessions can be open. Close one first.'],
+      'session.attention': ['有会话已结束或出错', 'A session exited or failed'],
+      'session.state.loading': ['加载中', 'Loading'],
+      'session.state.connecting': ['连接中', 'Connecting'],
+      'session.state.ready': ['运行中', 'Running'],
+      'session.state.closed': ['已结束', 'Exited'],
+      'session.state.error': ['错误', 'Error'],
       'tabs.batch': ['批量命令', 'Batch'],
       'tabs.settings': ['设置', 'Settings'],
       'session.new': ['新建连接', 'New connection'],
@@ -154,6 +160,7 @@ window.__ModuleLoader__.load({
       'terminal.reconnect': ['重新连接', 'Reconnect'],
       'terminal.openDetails': ['打开主机详情', 'Open details'],
       'terminal.assetsError': ['终端组件加载失败：{message}。如果刚更新插件，请重启 DSH 后重试。', 'Could not load the terminal component: {message}. If the plugin was just updated, restart DSH and retry.'],
+      'terminal.resyncFailed': ['终端输出曾中断，已尝试重新同步；如仍异常请重连。', 'Terminal output was interrupted; attempted a resync. Reconnect if problems persist.'],
       'terminal.backendHint': ['无法连接到插件后端。如果刚更新插件，请重启 DSH 后重试。', 'Cannot reach the plugin backend. If the plugin was just updated, restart DSH and retry.'],
       'terminal.passwordMissing': ['该主机还没有保存密码，请先打开「主机详情」设置服务器密码。', 'No password stored for this host. Open Details and set the server password first.'],
       'drawer.exit': ['退出码 {code}', 'exit {code}'],
@@ -1181,10 +1188,15 @@ window.__ModuleLoader__.load({
       const [activeSessionId, setActiveSessionId] = React.useState(() => persistentPanelState.activeSessionId)
       const [treeWidth, setTreeWidth] = React.useState(readTreeWidth)
       const [clearSignals, setClearSignals] = React.useState({})
+      const [sessionStates, setSessionStates] = React.useState({})
       const toastTimer = React.useRef(null)
       const floatingRef = React.useRef(null)
       const editorCloseGuard = React.useRef(null)
       const groupsCloseGuard = React.useRef(null)
+
+      const setSessionState = React.useCallback((id, status) => {
+        setSessionStates((prev) => (prev[id] === status ? prev : { ...prev, [id]: status }))
+      }, [])
 
       const notify = React.useCallback((message, tone = 'info') => {
         if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -1308,6 +1320,13 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const ids = new Set(sessions.map((session) => session.id))
         setClearSignals((prev) => {
+          const keys = Object.keys(prev)
+          if (keys.every((key) => ids.has(key))) return prev
+          const next = {}
+          for (const key of keys) if (ids.has(key)) next[key] = prev[key]
+          return next
+        })
+        setSessionStates((prev) => {
           const keys = Object.keys(prev)
           if (keys.every((key) => ids.has(key))) return prev
           const next = {}
@@ -1700,6 +1719,8 @@ window.__ModuleLoader__.load({
         setTreeWidth,
         sessions,
         activeSessionId,
+        sessionStates,
+        setSessionState,
         setActiveSessionId,
         clearSignals,
         openSession,
@@ -1884,9 +1905,15 @@ window.__ModuleLoader__.load({
         ]
       }
 
+      const sessionAttention = sessions.some((session) => {
+        const state = sessionStates[session.id]
+        return state === 'error' || state === 'closed'
+      })
       const tabItems = [
         ['hosts', t('tabs.hosts')],
-        ...(sessions.length > 0 ? [['sessions', t('tabs.sessions')]] : []),
+        ...(sessions.length > 0
+          ? [['sessions', h('span', { className: 'ssh-tabLabel' }, t('tabs.sessions'), sessionAttention ? h('span', { className: 'ssh-tabAlert', title: t('session.attention') }) : null)]]
+          : []),
         ['batch', t('tabs.batch')],
         ['settings', t('tabs.settings')],
       ]
@@ -2669,6 +2696,7 @@ window.__ModuleLoader__.load({
         t,
         hosts,
         sessions,
+        sessionStates,
         activeSessionId,
         setActiveSessionId,
         setActiveAlias,
@@ -2731,6 +2759,10 @@ window.__ModuleLoader__.load({
                 },
                 h('span', {
                   className: cx('ssh-sessionDot', credential ? (credential.key === 'password' ? 'ok' : 'warn') : 'warn'),
+                }),
+                h('span', {
+                  className: cx('ssh-sessionState', sessionStates[session.id] ?? 'loading'),
+                  title: t(`session.state.${sessionStates[session.id] ?? 'loading'}`),
                 }),
                 h('span', { className: 'ssh-sessionTabTitle' }, host ? hostName(host) : session.hostAlias),
                 h(
@@ -3118,11 +3150,27 @@ window.__ModuleLoader__.load({
     const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
     const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
     const PTY_CLEAR_ROUTE = '/dsh-ssh-manage/pty/clear'
+    const PTY_TOUCH_ROUTE = '/dsh-ssh-manage/pty/touch'
     const ptyStream = { source: null, ready: false, promise: null, listeners: new Map() }
     const ptyActiveIds = new Set()
     const ptyClosedIds = new Set()
     const MAX_TERMINAL_SESSIONS = 16
     const ptyStreamLostHandlers = new Set()
+
+    if (typeof window !== 'undefined') {
+      const heartbeat = setInterval(() => {
+        if (ptyActiveIds.size === 0) return
+        try {
+          void fetch(PTY_TOUCH_ROUTE, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ids: [...ptyActiveIds] }),
+            keepalive: true,
+          }).catch(() => {})
+        } catch {}
+      }, 60_000)
+      heartbeat.unref?.()
+    }
 
     function closePtySession(id) {
       if (!id) return
@@ -3286,7 +3334,13 @@ window.__ModuleLoader__.load({
       const [message, setMessage] = React.useState('')
       const [retryToken, setRetryToken] = React.useState(0)
       const clearRequested = React.useRef(false)
+      const reportStatus = model.setSessionState
+
+      React.useEffect(() => {
+        reportStatus?.(sessionId, status)
+      }, [reportStatus, sessionId, status])
       const syncedRef = React.useRef(false)
+      const clearEpochRef = React.useRef(0)
 
       React.useEffect(() => {
         activeRef.current = active === true
@@ -3303,6 +3357,7 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => {
         if (!clearSignal) return
+        clearEpochRef.current += 1
         // Only a clear issued before attach needs to survive into the attach
         // replay. A clear on a live, synced terminal is handled by the server
         // route directly and must not truncate the next attach replay.
@@ -3443,7 +3498,6 @@ window.__ModuleLoader__.load({
           sessionKey = sessionId
           const id = sessionKey
           let synced = false
-          let lastSeq = 0
           const pendingEvents = []
 
           const clearTerminal = () => {
@@ -3454,16 +3508,87 @@ window.__ModuleLoader__.load({
             } catch {}
           }
 
+          let resyncing = false
+          let resyncFailedAt = 0
+          let resyncAttempts = 0
+          let resyncGraceUntil = 0
+          const resyncQueue = []
+          let lastSeq = 0
+
           const applyOutput = (event) => {
             const seq = Number(event.seq)
             if (Number.isFinite(seq)) {
               if (seq <= lastSeq) return
-              lastSeq = seq
+              if (lastSeq > 0 && seq > lastSeq + 1) {
+                if (Date.now() < resyncGraceUntil) {
+                  lastSeq = seq
+                } else {
+                  resyncAttempts += 1
+                  if (resyncAttempts > 3) {
+                    resyncAttempts = 0
+                    resyncGraceUntil = Date.now() + 5_000
+                    lastSeq = seq
+                  } else {
+                    resyncQueue.push(event)
+                    void resync()
+                    return
+                  }
+                }
+              } else {
+                lastSeq = seq
+                resyncAttempts = 0
+              }
             }
             try { term.write(decodeBase64(event.data)) } catch {}
           }
 
+          const resync = async () => {
+            if (resyncing || stopped || finished || !sessionKey) return
+            const clearEpoch = clearEpochRef.current
+            resyncing = true
+            try {
+              const value = await ptyPost(PTY_ATTACH_ROUTE, {
+                id: sessionKey,
+                cols: term?.cols ?? 80,
+                rows: term?.rows ?? 24,
+              }, 15_000)
+              if (removed || stopped || finished) {
+                resyncing = false
+                return
+              }
+              if (clearEpochRef.current !== clearEpoch) {
+                clearRequested.current = false
+                clearTerminal()
+              } else if (value && value.output) {
+                try {
+                  term.reset()
+                  term.write(decodeBase64(value.output))
+                } catch {}
+              }
+              const seq = Number(value?.seq)
+              if (Number.isFinite(seq)) lastSeq = seq
+              resyncing = false
+              for (const event of resyncQueue.splice(0)) {
+                if (finished || stopped) break
+                handleEvent(event)
+              }
+            } catch {
+              resyncing = false
+              resyncFailedAt = Date.now()
+              resyncGraceUntil = Date.now() + 5_000
+              try { model.notify?.(t('terminal.resyncFailed'), 'error') } catch {}
+              for (const event of resyncQueue.splice(0)) {
+                if (finished || stopped) break
+                handleEvent(event)
+              }
+            }
+          }
+
           const handleEvent = (event) => {
+            if (resyncing) {
+              resyncQueue.push(event)
+              return
+            }
             if (event.kind === 'output') {
               if (!synced) pendingEvents.push(event)
               else applyOutput(event)
@@ -4823,6 +4948,12 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-terminalOverlayBody{max-width:560px;font-size:11.5px;line-height:1.7;color:var(--ssh-text-3);word-break:break-word}
 .ssh-terminalOverlayActions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .ssh-sessionLayer{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--ssh-bg)}
+.ssh-sessionState{width:6px;height:6px;border-radius:50%;background:var(--ssh-dim);flex:0 0 auto}
+.ssh-sessionState.loading,.ssh-sessionState.connecting{background:var(--ssh-warn)}
+.ssh-sessionState.ready{background:var(--ssh-success)}
+.ssh-sessionState.error,.ssh-sessionState.closed{background:var(--ssh-danger)}
+.ssh-tabLabel{display:inline-flex;align-items:center;gap:5px}
+.ssh-tabAlert{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ssh-danger);flex:0 0 auto}
 .ssh-sessions{flex:1;min-height:0;display:flex;flex-direction:column}
 .ssh-sessionBar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:7px 12px;border-bottom:.5px solid var(--ssh-border);min-height:48px}
 .ssh-sessionTabs{flex:1;min-width:0;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:hidden;padding-bottom:1px}

@@ -44,7 +44,7 @@
 ### 交互式终端
 
 - 点「连接」打开真正的 PTY shell，不是一条命令一条命令地执行。
-- 多台主机以标签页常驻：切换到其它 DSH 会话再回来，终端会重新附着到原来的 shell，并回放最近约 256 KB 输出；关闭标签才结束会话。
+- 多台主机以标签页常驻：切换到其它 DSH 会话再回来，终端会重新附着到原来的 shell，并回放最近约 256 KB 输出；关闭标签、Host 退出，或 30 分钟无输出/输入/心跳才会结束会话。
 - xterm.js 6.0.0 渲染，支持 256 色、光标、滚动回看、选中复制、粘贴、窗口 resize。
 - 终端主题跟随 DSH 明暗主题；会话顶部有地址、密码状态、测试连接、文件、详情、清屏、关闭等快捷操作。
 - 输出走同源 HTTP/SSE 长连接，输入 / 尺寸 / 关闭走同源 HTTP POST；插件同时保留经过测试的 WebSocket 备用通道。
@@ -64,7 +64,7 @@
 - 密码密文与本地密钥位于同一用户目录，主要防止文件被直接误读，不能抵御同一用户下的恶意进程。
 - 主机分组、标签、收藏、备注、巡检结果保存在 `hosts.json`；密码保存在 `vault.json`；删除/修改配置前写入备份目录。
 
-> **主机密钥校验**：当前传输未接入 `known_hosts` 主机密钥校验，ssh2 默认接受服务器提供的主机密钥（与之前的单条命令执行一致）。**请在可信网络中使用交互式终端**，不要在不可信网络中输入 sudo 密码等敏感信息。
+> **主机密钥校验**：连接会按 `known_hosts` 校验主机密钥（默认 `~/.ssh/known_hosts`，可用 `SSH_KNOWN_HOSTS` 指向其它文件）。首次连接或服务器密钥变更时会拒绝连接，错误信息包含服务器 `SHA256:` 指纹、期望指纹和 known_hosts 路径；请先通过可信渠道核对指纹，再将该主机的 `[host]:port key-type base64-blob` 行写入 known_hosts（或使用 `ssh-keyscan` 后人工核对）。`DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 会完全关闭校验，仅限紧急排障，不要长期使用。
 
 ### Agent 工具
 
@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.2.2`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.0`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.2
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.0
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.2.2
+dsh plugin add dsh-ssh-manage@0.3.0
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -139,7 +139,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 
 | | 要求 |
 | --- | --- |
-| **DSH** | **`>=0.2.2-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.2-rc.3`） |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
 | **Node.js** | `>=20`（跟随 DSH 内置运行时） |
 | **平台** | 实机验证 macOS；测试套件只依赖 Node 内置模块，可跨平台运行 |
 | **网络** | 需要能访问目标 SSH 主机的 22 端口（或配置的端口） |
@@ -178,7 +178,8 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 | --- | --- |
 | `index.js` | Host 插件：HTTP/SSE/WS 路由、action 分发、PTY 会话、`ssh_manager` 工具。 |
 | `client.js` | 浏览器插件：侧边栏入口、管理页、xterm 终端；只 `require('react')`。 |
-| `lib/ssh-client.js` | ssh2 密码认证、PTY、exec、SFTP、巡检。 |
+| `lib/ssh-client.js` | ssh2 密码认证、PTY、exec、SFTP、巡检；known_hosts 主机密钥校验与 keepalive。 |
+| `lib/known-hosts.js` | `known_hosts` 解析与主机密钥校验（plain/bracket/wildcard/hashed/revoked，SHA256 指纹）。 |
 | `lib/ssh-config.js` | `~/.ssh/config` 解析、局部写入、备份、原子保存。 |
 | `lib/storage.js` / `lib/vault.js` / `lib/metadata.js` | 状态目录、AES-256-GCM 凭据仓库、主机元数据。 |
 | `lib/ws.js` | 无依赖 RFC6455 WebSocket 服务端（备用 PTY 通道）。 |
@@ -192,7 +193,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 - 状态目录中的 `vault.json` 使用 AES-256-GCM 加密，密钥在当前用户目录；`hosts.json` 保存分组/标签/备注等非敏感元数据。
 - 所有 Host / PTY / 静态资源路由都要求 DSH 浏览器会话认证，未认证请求返回 401。
 - 终端输出仅在你自己的浏览器与目标 SSH 主机之间传输，不经过第三方服务。
-- 当前未实现 `known_hosts` 主机密钥校验；请只在可信网络输入敏感信息。
+- 连接按 OpenSSH `known_hosts` 校验主机密钥（默认 `~/.ssh/known_hosts`，可用 `SSH_KNOWN_HOSTS` 覆盖）；未知或变更的主机密钥会拒绝连接，并显示 `SHA256:` 指纹与 known_hosts 路径提示。`DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 仅限紧急排障时关闭校验。
 
 ## 开发
 
@@ -217,8 +218,8 @@ npm test
 
 ## 已知限制
 
-- **主机密钥校验**：未接入 `known_hosts`，ssh2 默认接受服务器主机密钥；仅在可信网络使用。
-- **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；只有关闭标签或 Host 进程退出才真正结束。Host 侧空闲超过 6 小时会清理孤儿会话（最大 16 个）。
+- **主机密钥校验**：依赖本机 `known_hosts`；首次连接需要先导入主机密钥（连接会失败并给出服务器 `SHA256:` 指纹、期望指纹与 known_hosts 路径）。只读取 `~/.ssh/known_hosts` / `SSH_KNOWN_HOSTS`，不读取 ssh_config 的 `UserKnownHostsFile`/`GlobalKnownHostsFile`，也不支持 SSH CA 主机证书。紧急情况下可设置 `DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 临时关闭校验。
+- **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；浏览器通过 `/pty/touch` 心跳续期，Host 侧超过 30 分钟无输出、输入或心跳的会话会作为孤儿清理（最大 16 个）。
 - **仅密码认证**：不支持 IdentityFile / SSH agent / ProxyJump 传输；配置中的这些字段会原样保留，但不会用于连接。ProxyJump 主机会明确报错。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。

@@ -64,7 +64,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 - Ciphertext and key live in the same user directory, so this mainly protects against accidental file reads, not against malicious processes running as the same user.
 - Groups, tags, favorites, notes and inspection data live in `hosts.json`; passwords live in `vault.json`; configuration changes are snapshotted to the backup directory.
 
-> **Host key verification:** the transport does not verify `known_hosts` host keys (ssh2 accepts the server-provided key, same as the previous one-shot command path). **Use the interactive terminal only on trusted networks** and do not type sudo passwords on untrusted networks.
+> **Host key verification:** connections verify host keys against `known_hosts` (default `~/.ssh/known_hosts`, override with `SSH_KNOWN_HOSTS`). The first connection to an unknown host, or a changed host key, is refused with the server `SHA256:` fingerprint, expected fingerprint and known_hosts path. Verify the fingerprint out of band, then add the host line (`host key-type base64-blob`, or `[host]:port ...` for non-22) or import it with `ssh-keyscan`; `DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` disables verification for emergency use only. Host certificates signed by a CA are not supported.
 
 ### Agent tool
 
@@ -96,16 +96,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.2.2`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.0`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.2
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.0
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.2.2
+dsh plugin add dsh-ssh-manage@0.3.0
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -137,7 +137,7 @@ and make sure the package is resolvable by the profile (for example `link:` to t
 
 | | Requirement |
 | --- | --- |
-| **DSH** | **`>=0.2.2-rc.3 <0.3.0`** (validated on DSH Desktop `0.2.2-rc.3`) |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.0`** (validated on DSH Desktop `0.2.1-rc.3`) |
 | **Node.js** | `>=20` (follows the DSH runtime) |
 | **Platform** | Validated on macOS; the test suite only uses Node built-ins and runs cross-platform |
 | **Network** | Reachable SSH port (22 by default, or the configured port) |
@@ -190,7 +190,7 @@ and make sure the package is resolvable by the profile (for example `link:` to t
 - `vault.json` uses AES-256-GCM with a key in the current user directory; `hosts.json` holds groups/tags/notes and other non-secret metadata.
 - All Host / PTY / static-asset routes require an authenticated DSH browser session; unauthenticated requests return 401.
 - Terminal traffic only flows between your browser and the target SSH host; no third-party service is involved.
-- `known_hosts` host-key verification is not implemented; only use it on trusted networks for sensitive input.
+- Host keys are verified against `~/.ssh/known_hosts` / `SSH_KNOWN_HOSTS`; unknown or changed keys are refused. This plugin only reads those files, not ssh_config `UserKnownHostsFile`/`GlobalKnownHostsFile`, and does not validate SSH CA host certificates — such hosts will be blocked until their key is added to the configured known_hosts file.
 
 ## Development
 
@@ -215,8 +215,8 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`) and 
 
 ## Known limitations
 
-- **Host key verification** is not implemented; ssh2 accepts the server-provided key. Use trusted networks only.
-- **Session lifetime**: sessions are kept on the Host; switching to another DSH session, temporarily leaving the panel, or refreshing the page re-attaches to the existing shell and replays roughly the last 256 KB of output. Only closing the tab or exiting the Host process ends them; orphaned sessions are reaped after 6 hours of inactivity (max 16 sessions).
+- **Host key verification** uses `known_hosts`; hosts with no matching entry are refused with a fingerprint and path hint. No in-panel trust/import flow yet; custom `UserKnownHostsFile`/SSH CA setups need manual entry.
+- **Session lifetime**: sessions are kept on the Host; switching to another DSH session, temporarily leaving the panel, or refreshing the page re-attaches to the existing shell and replays roughly the last 256 KB of output. The browser sends a `/pty/touch` heartbeat every 60s while the page is open; a session with no output, input or heartbeat for 30 minutes is reaped (max 16 sessions).
 - **Password auth only**: IdentityFile / SSH agent / ProxyJump are not used for transport; those config fields are preserved but ignored. ProxyJump hosts fail with a clear error.
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
