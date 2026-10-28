@@ -16,6 +16,8 @@ window.__ModuleLoader__.load({
       panel: ['SSH 主机', 'SSH Hosts'],
       'tabs.hosts': ['主机', 'Hosts'],
       'tabs.sessions': ['会话', 'Sessions'],
+      'session.restoring': ['正在恢复终端会话…', 'Restoring terminal sessions…'],
+      'session.tooMany': ['最多同时打开 16 个终端会话，请先关闭一个。', 'At most 16 terminal sessions can be open. Close one first.'],
       'tabs.batch': ['批量命令', 'Batch'],
       'tabs.settings': ['设置', 'Settings'],
       'session.new': ['新建连接', 'New connection'],
@@ -141,6 +143,7 @@ window.__ModuleLoader__.load({
       'editor.required': ['请填写别名和服务器地址。', 'Alias and hostname are required.'],
       'editor.invalidAlias': ['别名只能包含字母、数字、点、下划线、@ 和短横线。', 'Alias may only contain letters, digits, dot, underscore, @ and dash.'],
       'editor.delete': ['删除这台主机', 'Delete this host'],
+      'editor.discardChanges': ['有未保存的修改，确定放弃？', 'Discard unsaved changes?'],
       'drawer.files': ['文件', 'Files'],
       'drawer.details': ['详情', 'Details'],
       'terminal.loading': ['正在加载终端…', 'Loading terminal…'],
@@ -1180,6 +1183,8 @@ window.__ModuleLoader__.load({
       const [clearSignals, setClearSignals] = React.useState({})
       const toastTimer = React.useRef(null)
       const floatingRef = React.useRef(null)
+      const editorCloseGuard = React.useRef(null)
+      const groupsCloseGuard = React.useRef(null)
 
       const notify = React.useCallback((message, tone = 'info') => {
         if (toastTimer.current) clearTimeout(toastTimer.current)
@@ -1375,6 +1380,10 @@ window.__ModuleLoader__.load({
         if (existing) {
           setActiveSessionId(existing.id)
         } else {
+          if (sessions.length >= MAX_TERMINAL_SESSIONS) {
+            notify(t('session.tooMany'), 'error')
+            return
+          }
           const id = newPtySessionId()
           ptyActiveIds.add(id)
           setSessions((prev) => [...prev, { id, hostAlias: host.host }])
@@ -1402,6 +1411,7 @@ window.__ModuleLoader__.load({
       }
 
       function clearSession(id) {
+        clearPtySession(id)
         setClearSignals((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }))
       }
 
@@ -1584,11 +1594,15 @@ window.__ModuleLoader__.load({
             return
           }
           if (editor) {
-            setEditor(null)
+            const guard = editorCloseGuard.current
+            if (typeof guard === 'function') guard()
+            else setEditor(null)
             return
           }
           if (groupsOpen) {
-            setGroupsOpen(false)
+            const guard = groupsCloseGuard.current
+            if (typeof guard === 'function') guard()
+            else setGroupsOpen(false)
             return
           }
           if (drawer) setDrawer(null)
@@ -1680,6 +1694,8 @@ window.__ModuleLoader__.load({
         setFloating,
         setEditor,
         setDrawer,
+        editorCloseGuard,
+        groupsCloseGuard,
         treeWidth,
         setTreeWidth,
         sessions,
@@ -1934,7 +1950,7 @@ window.__ModuleLoader__.load({
               'div',
               { className: 'ssh-loadingPage' },
               h(Spinner, { size: 22 }),
-              h('span', null, t('state.loading')),
+              h('span', null, sessions.length > 0 ? t('session.restoring') : t('state.loading')),
             )
           : !snapshot && error
             ? h(
@@ -1951,7 +1967,7 @@ window.__ModuleLoader__.load({
                 : effectiveTab === 'batch'
                   ? h(BatchTab, { model })
                   : h(SettingsTab, { model }),
-        sessions.length > 0
+        snapshot && sessions.length > 0
           ? h(
               'div',
               { className: 'ssh-sessionLayer', style: { display: effectiveTab === 'sessions' ? 'flex' : 'none' } },
@@ -3039,11 +3055,73 @@ window.__ModuleLoader__.load({
       }
     }
 
+    const terminalThemeListeners = new Set()
+    let terminalThemeObserver = null
+    let terminalThemeMedia = null
+    let terminalThemeScheduled = false
+
+    function emitTerminalTheme() {
+      for (const listener of [...terminalThemeListeners]) {
+        try { listener() } catch {}
+      }
+    }
+
+    function scheduleTerminalTheme() {
+      if (terminalThemeScheduled) return
+      terminalThemeScheduled = true
+      const run = () => {
+        terminalThemeScheduled = false
+        emitTerminalTheme()
+      }
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+      else setTimeout(run, 16)
+    }
+
+    function ensureTerminalThemeWatcher() {
+      if (typeof MutationObserver !== 'undefined' && !terminalThemeObserver) {
+        terminalThemeObserver = new MutationObserver(scheduleTerminalTheme)
+        const options = {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'data-theme', 'data-color-mode', 'data-ds-dark-theme', 'data-ds-theme-source'],
+        }
+        terminalThemeObserver.observe(document.documentElement, options)
+        if (document.body) terminalThemeObserver.observe(document.body, options)
+      }
+      if (typeof window !== 'undefined' && typeof window.matchMedia === 'function' && !terminalThemeMedia) {
+        terminalThemeMedia = window.matchMedia('(prefers-color-scheme: dark)')
+        const onChange = () => scheduleTerminalTheme()
+        if (typeof terminalThemeMedia.addEventListener === 'function') terminalThemeMedia.addEventListener('change', onChange)
+        else if (typeof terminalThemeMedia.addListener === 'function') terminalThemeMedia.addListener(onChange)
+        terminalThemeMedia.__sshThemeChange = onChange
+      }
+    }
+
+    function subscribeTerminalTheme(listener) {
+      terminalThemeListeners.add(listener)
+      ensureTerminalThemeWatcher()
+      return () => {
+        terminalThemeListeners.delete(listener)
+        if (terminalThemeListeners.size > 0) return
+        if (terminalThemeObserver) {
+          terminalThemeObserver.disconnect()
+          terminalThemeObserver = null
+        }
+        if (terminalThemeMedia) {
+          const onChange = terminalThemeMedia.__sshThemeChange
+          if (typeof terminalThemeMedia.removeEventListener === 'function') terminalThemeMedia.removeEventListener('change', onChange)
+          else if (typeof terminalThemeMedia.removeListener === 'function') terminalThemeMedia.removeListener(onChange)
+          terminalThemeMedia = null
+        }
+      }
+    }
+
     const PTY_EVENTS_ROUTE = '/dsh-ssh-manage/pty/events'
     const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
+    const PTY_CLEAR_ROUTE = '/dsh-ssh-manage/pty/clear'
     const ptyStream = { source: null, ready: false, promise: null, listeners: new Map() }
     const ptyActiveIds = new Set()
     const ptyClosedIds = new Set()
+    const MAX_TERMINAL_SESSIONS = 16
     const ptyStreamLostHandlers = new Set()
 
     function closePtySession(id) {
@@ -3065,13 +3143,23 @@ window.__ModuleLoader__.load({
       return () => ptyStreamLostHandlers.delete(handler)
     }
 
-    function resetPtyStream() {
+    function resetPtyStream(reason = new Error('Terminal event stream closed')) {
+      const wasReady = ptyStream.ready === true
+      const rejectPending = ptyStream.reject
+      ptyStream.reject = null
       if (ptyStream.source) {
         try { ptyStream.source.close() } catch {}
       }
       ptyStream.source = null
       ptyStream.ready = false
       ptyStream.promise = null
+      if (rejectPending) {
+        try { rejectPending(reason) } catch {}
+      }
+      // A stream that never finished connecting is not a lost terminal yet;
+      // its waiting panes get the rejected ensure promise and keep their
+      // normal connecting/error overlay.
+      if (!wasReady) return
       for (const handler of [...ptyStreamLostHandlers]) {
         try { handler() } catch {}
       }
@@ -3085,8 +3173,18 @@ window.__ModuleLoader__.load({
     }
 
     function ensurePtyStream() {
-      if (ptyStream.ready && ptyStream.source && ptyStream.source.readyState === 1) return Promise.resolve()
-      if (ptyStream.source && ptyStream.source.readyState !== 1) resetPtyStream()
+      if (ptyStream.source) {
+        const state = ptyStream.source.readyState
+        if (state === 1 && ptyStream.ready) return Promise.resolve()
+        // CONNECTING: all callers must share the one in-flight promise; never
+        // tear it down. This is the multi-tab restore / rapid-second-connect
+        // race that used to leave N-1 panes in a permanent error overlay.
+        if (state === 0) {
+          if (ptyStream.promise) return ptyStream.promise
+          try { ptyStream.source.close() } catch {}
+          ptyStream.source = null
+        } else if (state === 2) resetPtyStream()
+      }
       if (ptyStream.promise) return ptyStream.promise
       ptyStream.promise = new Promise((resolve, reject) => {
         let settled = false
@@ -3100,14 +3198,17 @@ window.__ModuleLoader__.load({
           ptyStream.source = null
           ptyStream.ready = false
           ptyStream.promise = null
+          ptyStream.reject = null
           reject(error)
         }
         ptyStream.source = source
+        ptyStream.reject = reject
         timer = setTimeout(() => fail(new Error('Terminal event stream timed out')), 10_000)
         source.addEventListener('open', () => {
           if (settled) return
           settled = true
           clearTimeout(timer)
+          ptyStream.reject = null
           ptyStream.ready = true
           resolve()
         })
@@ -3161,6 +3262,11 @@ window.__ModuleLoader__.load({
       }
     }
 
+    function clearPtySession(id) {
+      if (!id) return
+      void ptyPost(PTY_CLEAR_ROUTE, { id }, 15_000).catch(() => {})
+    }
+
     function decodeBase64(text) {
       const binary = atob(String(text ?? ''))
       const bytes = new Uint8Array(binary.length)
@@ -3179,6 +3285,8 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('loading')
       const [message, setMessage] = React.useState('')
       const [retryToken, setRetryToken] = React.useState(0)
+      const clearRequested = React.useRef(false)
+      const syncedRef = React.useRef(false)
 
       React.useEffect(() => {
         activeRef.current = active === true
@@ -3194,7 +3302,12 @@ window.__ModuleLoader__.load({
       }, [active])
 
       React.useEffect(() => {
-        if (!clearSignal || !termRef.current) return
+        if (!clearSignal) return
+        // Only a clear issued before attach needs to survive into the attach
+        // replay. A clear on a live, synced terminal is handled by the server
+        // route directly and must not truncate the next attach replay.
+        clearRequested.current = syncedRef.current !== true
+        if (!termRef.current) return
         try {
           termRef.current.clear()
           termRef.current.write('\x1b[H\x1b[2J')
@@ -3217,6 +3330,8 @@ window.__ModuleLoader__.load({
         let opened = false
         let inputChain = Promise.resolve()
         let streamLost = null
+        let themeUnsub = null
+        syncedRef.current = false
         setStatus('loading')
         setMessage('')
 
@@ -3278,6 +3393,10 @@ window.__ModuleLoader__.load({
           termRef.current = term
           fitRef.current = fit
           try { fit.fit() } catch {}
+          themeUnsub = subscribeTerminalTheme(() => {
+            if (removed || !term) return
+            try { term.options.theme = terminalThemeFor(container) } catch {}
+          })
           term.onData((data) => {
             const id = sessionKey
             if (!id || !data || !opened) return
@@ -3327,6 +3446,14 @@ window.__ModuleLoader__.load({
           let lastSeq = 0
           const pendingEvents = []
 
+          const clearTerminal = () => {
+            if (!term) return
+            try {
+              term.clear()
+              term.write('\x1b[H\x1b[2J')
+            } catch {}
+          }
+
           const applyOutput = (event) => {
             const seq = Number(event.seq)
             if (Number.isFinite(seq)) {
@@ -3340,6 +3467,9 @@ window.__ModuleLoader__.load({
             if (event.kind === 'output') {
               if (!synced) pendingEvents.push(event)
               else applyOutput(event)
+            } else if (event.kind === 'clear') {
+              if (!synced) pendingEvents.push(event)
+              else clearTerminal()
             } else if (event.kind === 'exit') {
               if (!synced) {
                 pendingEvents.push(event)
@@ -3386,18 +3516,23 @@ window.__ModuleLoader__.load({
               closePtySession(id)
               return
             }
-            if (removed) return
-            if (value && value.output) {
+            if (removed || stopped || finished) return
+            if (clearRequested.current) {
+              clearRequested.current = false
+              clearTerminal()
+              clearPtySession(id)
+            } else if (value && value.output) {
               try { term.write(decodeBase64(value.output)) } catch {}
             }
             const seq = Number(value?.seq)
             if (Number.isFinite(seq)) lastSeq = seq
             synced = true
             for (const event of pendingEvents.splice(0)) {
-              if (finished) break
+              if (finished || stopped) break
               handleEvent(event)
             }
-            if (finished) return
+            if (finished || stopped || removed) return
+            syncedRef.current = true
             opened = true
             setStatus('ready')
             setMessage('')
@@ -3422,6 +3557,7 @@ window.__ModuleLoader__.load({
 
         return () => {
           removed = true
+          if (themeUnsub) themeUnsub()
           if (streamLost) streamLost()
           if (resizeObserver) resizeObserver.disconnect()
           teardown()
@@ -3809,6 +3945,28 @@ window.__ModuleLoader__.load({
         setDraft((prev) => ({ ...prev, [field]: value }))
       }
 
+      const dirty = password !== '' || JSON.stringify(draft) !== JSON.stringify(state.draft)
+      const requestClose = () => {
+        if (busy) return
+        if (!dirty) {
+          model.setEditor(null)
+          return
+        }
+        let discard = true
+        try {
+          discard = typeof window.confirm !== 'function' || window.confirm(t('editor.discardChanges'))
+        } catch {}
+        if (discard) model.setEditor(null)
+      }
+
+      React.useEffect(() => {
+        const guard = () => requestClose()
+        model.editorCloseGuard.current = guard
+        return () => {
+          if (model.editorCloseGuard.current === guard) model.editorCloseGuard.current = null
+        }
+      })
+
       async function submit() {
         const alias = draft.host.trim()
         const hostname = draft.hostname.trim()
@@ -3864,7 +4022,7 @@ window.__ModuleLoader__.load({
               t('editor.delete'),
             )
           : h('span', { key: 'spacer', className: 'ssh-toolSpacer' }),
-        h(Button, { key: 'cancel', onClick: () => model.setEditor(null), disabled: busy }, t('common.cancel')),
+        h(Button, { key: 'cancel', onClick: requestClose, disabled: busy }, t('common.cancel')),
         h(
           Button,
           { key: 'save', variant: 'primary', onClick: () => void submit(), disabled: busy },
@@ -3881,7 +4039,7 @@ window.__ModuleLoader__.load({
           width: 700,
           icon: h(IconTerminal, { size: 16 }),
           closeLabel: t('common.close'),
-          onClose: () => model.setEditor(null),
+          onClose: requestClose,
           footer,
         },
         h(
@@ -4004,6 +4162,17 @@ window.__ModuleLoader__.load({
       const groups = buildGroups(hosts, t).filter((group) => group.key !== '')
       const [drafts, setDrafts] = React.useState(() => Object.fromEntries(groups.map((group) => [group.key, group.key])))
       const busy = isPending('groups')
+      const requestClose = () => {
+        if (!busy) model.setGroupsOpen(false)
+      }
+
+      React.useEffect(() => {
+        const guard = () => requestClose()
+        model.groupsCloseGuard.current = guard
+        return () => {
+          if (model.groupsCloseGuard.current === guard) model.groupsCloseGuard.current = null
+        }
+      })
 
       async function commit(name) {
         const next = String(drafts[name] ?? '').trim()
@@ -4020,8 +4189,8 @@ window.__ModuleLoader__.load({
           width: 560,
           icon: h(IconFolder, { size: 16 }),
           closeLabel: t('common.close'),
-          onClose: () => model.setGroupsOpen(false),
-          footer: [h(Button, { key: 'close', onClick: () => model.setGroupsOpen(false) }, t('common.close'))],
+          onClose: requestClose,
+          footer: [h(Button, { key: 'close', onClick: requestClose }, t('common.close'))],
         },
         groups.length === 0
           ? h('div', { className: 'ssh-sectionHint' }, t('groups.empty'))

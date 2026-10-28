@@ -17,6 +17,7 @@ const PTY_INPUT_ROUTE = '/dsh-ssh-manage/pty/input'
 const PTY_RESIZE_ROUTE = '/dsh-ssh-manage/pty/resize'
 const PTY_ATTACH_ROUTE = '/dsh-ssh-manage/pty/attach'
 const PTY_CLOSE_ROUTE = '/dsh-ssh-manage/pty/close'
+const PTY_CLEAR_ROUTE = '/dsh-ssh-manage/pty/clear'
 const MAX_PTY_SESSIONS = 16
 const PTY_BUFFER_BYTES = 256 * 1024
 const PTY_IDLE_MS = 6 * 60 * 60 * 1000
@@ -75,14 +76,26 @@ function errorMessage(error) {
 }
 
 async function state(paths) {
-  const [current, metadata, passwords] = await Promise.all([listSshHosts(paths), loadMetadata(paths), listPasswordAliases(paths)])
+  const [current, metadataResult, passwordsResult] = await Promise.all([
+    listSshHosts(paths),
+    loadMetadata(paths).then((value) => ({ value }), (error) => ({ error })),
+    listPasswordAliases(paths).then((value) => ({ value }), (error) => ({ error })),
+  ])
+  const warnings = []
+  let entries = {}
+  if ('error' in metadataResult) warnings.push({ store: 'metadata', message: errorMessage(metadataResult.error) })
+  else entries = metadataResult.value.entries
+  let passwords = []
+  if ('error' in passwordsResult) warnings.push({ store: 'vault', message: errorMessage(passwordsResult.error) })
+  else passwords = passwordsResult.value
   const passwordSet = new Set(passwords)
   const stateDir = storagePaths(paths).stateDir
   return {
     ...current,
     stateDir,
     backupDir: paths.backupDir || path.join(stateDir, 'backups'),
-    hosts: current.hosts.map((host) => ({ ...host, ...(metadata.entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
+    hosts: current.hosts.map((host) => ({ ...host, ...(entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
+    warnings,
   }
 }
 
@@ -282,6 +295,16 @@ const ptyPendingIds = new Set()
 const ptyEventClients = new Set()
 let ptyOpening = 0
 
+function createPtyRuntime() {
+  return { generation: 0, active: true, upgrades: new Set() }
+}
+
+const defaultPtyRuntime = createPtyRuntime()
+
+function isPtyRuntimeActive(runtime, generation) {
+  return runtime.active && runtime.generation === generation
+}
+
 function closeTextSession(id, notify = true) {
   const entry = ptyTextSessions.get(id)
   if (!entry) return
@@ -311,15 +334,17 @@ function broadcastPty(event) {
   for (const client of [...ptyEventClients]) writePtyEvent(client, event)
 }
 
-async function openTextSession(paths, payload) {
+async function openTextSession(paths, payload, runtime = defaultPtyRuntime) {
+  if (!runtime.active) throw new Error('Terminal runtime is not active')
   const id = typeof payload?.id === 'string' ? payload.id.trim() : ''
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(id)) throw new Error('A valid session id is required')
-  if (ptyTextSessions.has(id) || ptyPendingIds.has(id)) throw new Error('Terminal session already exists')
-  ptyPendingIds.add(id)
-  const cols = boundedInteger(payload.cols, 20, 500, 120)
-  const rows = boundedInteger(payload.rows, 5, 300, 32)
-  const alias = typeof payload.host === 'string' ? payload.host.trim() : ''
+  const cols = boundedInteger(payload?.cols, 20, 500, 120)
+  const rows = boundedInteger(payload?.rows, 5, 300, 32)
+  const alias = typeof payload?.host === 'string' ? payload.host.trim() : ''
   if (alias === '') throw new Error('host is required')
+  if (ptyTextSessions.has(id) || ptyPendingIds.has(id)) throw new Error('Terminal session already exists')
+  const generation = runtime.generation
+  ptyPendingIds.add(id)
   ptyOpening += 1
   try {
     if (ptySessions.size + ptyTextSessions.size + ptyOpening > MAX_PTY_SESSIONS) {
@@ -327,7 +352,12 @@ async function openTextSession(paths, payload) {
     }
     const host = await findHost(paths, alias)
     const password = await requirePassword(paths, host)
+    if (!isPtyRuntimeActive(runtime, generation)) throw new Error('Terminal runtime is not active')
     const session = await openPty(host, password, { cols, rows })
+    if (!isPtyRuntimeActive(runtime, generation)) {
+      try { session.close() } catch {}
+      throw new Error('Terminal runtime is not active')
+    }
     if (ptyTextSessions.has(id)) {
       try { session.close() } catch {}
       throw new Error('Terminal session already exists')
@@ -363,7 +393,7 @@ async function openTextSession(paths, payload) {
   }
 }
 
-function registerPtyHttpRoutes(ctx, paths) {
+function registerPtyHttpRoutes(ctx, paths, runtime) {
   const register = (route, label) => {
     ctx.effect(() => ctx.webServer.register(route), `dsh-ssh-manage: ${label}`)
   }
@@ -423,7 +453,7 @@ function registerPtyHttpRoutes(ctx, paths) {
         }
         const body = await readJsonBody(req)
         try {
-          const value = await openTextSession(paths, body ?? {})
+          const value = await openTextSession(paths, body ?? {}, runtime)
           sendJson(res, 200, { ok: true, value })
         } catch (error) {
           sendJson(res, 200, { ok: false, error: { code: 'pty-open-failed', message: errorMessage(error) } })
@@ -473,6 +503,7 @@ function registerPtyHttpRoutes(ctx, paths) {
     [PTY_INPUT_ROUTE, 'input', 'pty input route'],
     [PTY_RESIZE_ROUTE, 'resize', 'pty resize route'],
     [PTY_CLOSE_ROUTE, 'close', 'pty close route'],
+    [PTY_CLEAR_ROUTE, 'clear', 'pty clear route'],
   ]) {
     register(
       {
@@ -504,6 +535,10 @@ function registerPtyHttpRoutes(ctx, paths) {
                 0,
                 0,
               )
+            } else if (action === 'clear') {
+              entry.buffer = []
+              entry.bufferBytes = 0
+              broadcastPty({ kind: 'clear', id })
             } else {
               closeTextSession(id)
             }
@@ -554,7 +589,11 @@ function upgradeRejection(ctx, req) {
   return rejection === undefined ? undefined : rejection
 }
 
-async function handlePtyUpgrade(ctx, paths, req, socket, head) {
+async function handlePtyUpgrade(ctx, paths, req, socket, head, runtime = defaultPtyRuntime) {
+  if (!runtime.active) {
+    denyUpgrade(socket, 403)
+    return
+  }
   if (!isWebSocketUpgrade(req)) {
     try { socket.write('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n') } catch {}
     socket.destroy()
@@ -567,22 +606,30 @@ async function handlePtyUpgrade(ctx, paths, req, socket, head) {
   }
   const ws = acceptWebSocket(req, socket, head)
   if (!ws) return
+  const generation = runtime.generation
   let session = null
   let opening = false
   let cleaned = false
   let paused = false
+  let shutdown = null
   const keepalive = setInterval(() => ws.ping(), 25_000)
   keepalive.unref?.()
   const cleanup = () => {
     if (cleaned) return
     cleaned = true
     clearInterval(keepalive)
+    if (shutdown) runtime.upgrades.delete(shutdown)
     if (session) {
       ptySessions.delete(session)
       try { session.close() } catch {}
       session = null
     }
   }
+  shutdown = () => {
+    cleanup()
+    try { ws.close(1001) } catch {}
+  }
+  runtime.upgrades.add(shutdown)
   ws.on('close', cleanup)
   socket.on('drain', () => {
     if (!paused || !session) return
@@ -599,7 +646,7 @@ async function handlePtyUpgrade(ctx, paths, req, socket, head) {
     }
     if (!message || typeof message.type !== 'string' || cleaned) return
     if (!session) {
-      if (message.type !== 'open' || opening) return
+      if (message.type !== 'open' || opening || !runtime.active) return
       opening = true
       ptyOpening += 1
       try {
@@ -610,8 +657,9 @@ async function handlePtyUpgrade(ctx, paths, req, socket, head) {
         const rows = boundedInteger(message.rows, 5, 300, 32)
         const host = await findHost(paths, alias)
         const password = await requirePassword(paths, host)
+        if (!isPtyRuntimeActive(runtime, generation)) throw new Error('Terminal runtime is not active')
         session = await openPty(host, password, { cols, rows })
-        if (cleaned) {
+        if (cleaned || !isPtyRuntimeActive(runtime, generation)) {
           try { session.close() } catch {}
           session = null
           return
@@ -714,7 +762,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
@@ -723,6 +771,7 @@ export function apply(ctx) {
     throw new Error('dsh-ssh-manage requires DeepSeek Harness >=0.2.1-rc.3: ctx.webServer.register is unavailable.')
   }
   const paths = resolveSshPaths(process.env)
+  const runtime = createPtyRuntime()
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -772,7 +821,7 @@ export function apply(ctx) {
       }),
     'dsh-ssh-manage: action route',
   )
-  registerPtyHttpRoutes(ctx, paths)
+  registerPtyHttpRoutes(ctx, paths, runtime)
   registerAssetRoutes(ctx)
   if (typeof ctx.webServer.tapIndex === 'function') {
     const tags = [
@@ -793,7 +842,7 @@ export function apply(ctx) {
       ctx.webServer.registerUpgrade({
         path: PTY_ROUTE,
         handler: (req, socket, head) => {
-          void handlePtyUpgrade(ctx, paths, req, socket, head).catch(() => {
+          void handlePtyUpgrade(ctx, paths, req, socket, head, runtime).catch(() => {
             try { socket.destroy() } catch {}
           })
         },
@@ -802,6 +851,12 @@ export function apply(ctx) {
   )
   ctx.effect(
     () => () => {
+      runtime.active = false
+      runtime.generation += 1
+      for (const shutdown of [...runtime.upgrades]) {
+        try { shutdown() } catch {}
+      }
+      runtime.upgrades.clear()
       clearInterval(ptyIdleTimer)
       for (const session of ptySessions) {
         try { session.close() } catch {}

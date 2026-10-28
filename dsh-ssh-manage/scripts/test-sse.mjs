@@ -87,22 +87,25 @@ const server = new Server({ hostKeys: [keys.private] }, (client) => {
         acceptChange?.()
       })
       session.on('shell', (acceptShell) => {
-        const stream = acceptShell()
-        stream.write('fake-shell$ ')
-        stream.on('data', (chunk) => {
-          const text = chunk.toString('utf8')
-          if (!text.includes('\r')) {
-            stream.write(text)
-            return
-          }
-          const command = text.replace(/\r/g, '').trim()
-          if (command === 'exit') {
-            stream.exit(0)
-            stream.end()
-            return
-          }
-          stream.write(`\r\n${command} -> pty ${pty.cols}x${pty.rows}\r\nfake-shell$ `)
-        })
+        // Delay accepting so the dispose regression can catch an in-flight open.
+        setTimeout(() => {
+          const stream = acceptShell()
+          stream.write('fake-shell$ ')
+          stream.on('data', (chunk) => {
+            const text = chunk.toString('utf8')
+            if (!text.includes('\r')) {
+              stream.write(text)
+              return
+            }
+            const command = text.replace(/\r/g, '').trim()
+            if (command === 'exit') {
+              stream.exit(0)
+              stream.end()
+              return
+            }
+            stream.write(`\r\n${command} -> pty ${pty.cols}x${pty.rows}\r\nfake-shell$ `)
+          })
+        }, 250)
       })
     })
   })
@@ -153,7 +156,8 @@ try {
   const inputRoute = route(__test.PTY_INPUT_ROUTE)
   const resizeRoute = route(__test.PTY_RESIZE_ROUTE)
   const closeRoute = route(__test.PTY_CLOSE_ROUTE)
-  assert.ok(eventsRoute && openRoute && attachRoute && inputRoute && resizeRoute && closeRoute)
+  const clearRoute = route(__test.PTY_CLEAR_ROUTE)
+  assert.ok(eventsRoute && openRoute && attachRoute && inputRoute && resizeRoute && closeRoute && clearRoute)
 
   const sse = new FakeResponse()
   await eventsRoute.handler(fakeRequest('GET'), sse)
@@ -198,6 +202,21 @@ try {
   await inputRoute.handler(fakeRequest('POST', { id: 'pty-sse-test', data: 'again\r' }), afterAttach)
   await waitForSse(reattachedSse, (event) => event.kind === 'output' && decode(event).includes('again -> pty 120x40'))
 
+  const clearResponse = new FakeResponse()
+  await clearRoute.handler(fakeRequest('POST', { id: 'pty-sse-test' }), clearResponse)
+  assert.equal(JSON.parse(clearResponse.body.toString()).ok, true)
+  await waitForSse(reattachedSse, (event) => event.kind === 'clear' && event.id === 'pty-sse-test')
+  const clearedAttach = new FakeResponse()
+  await attachRoute.handler(fakeRequest('POST', { id: 'pty-sse-test', cols: 120, rows: 40 }), clearedAttach)
+  const cleared = JSON.parse(clearedAttach.body.toString())
+  assert.equal(cleared.ok, true)
+  assert.equal(cleared.value.output, '')
+  assert.ok(cleared.value.seq >= attached.value.seq)
+  const afterClearInput = new FakeResponse()
+  await inputRoute.handler(fakeRequest('POST', { id: 'pty-sse-test', data: 'postclear\r' }), afterClearInput)
+  await waitForSse(reattachedSse, (event) => event.kind === 'output' && decode(event).includes('postclear -> pty 120x40'))
+  console.log('ok - /pty/clear truncates the replay buffer and broadcasts a clear event')
+
   const closeResponse = new FakeResponse()
   await closeRoute.handler(fakeRequest('POST', { id: 'pty-sse-test' }), closeResponse)
   assert.equal(JSON.parse(closeResponse.body.toString()).ok, true)
@@ -227,6 +246,54 @@ try {
   assert.equal(deniedResponse.statusCode, 401)
   assert.equal(deniedResponse.body, undefined)
   console.log('ok - HTTP PTY routes (events and open) require an authenticated browser session')
+
+  // A failed open must release its id so the same client id can be retried.
+  const invalidOpen = new FakeResponse()
+  await openRoute.handler(fakeRequest('POST', { id: 'pty-retry-test', host: 'missing-host', cols: 80, rows: 24 }), invalidOpen)
+  assert.match(JSON.parse(invalidOpen.body.toString()).error.message, /was not found/)
+  const retryOpen = new FakeResponse()
+  await openRoute.handler(fakeRequest('POST', { id: 'pty-retry-test', host: 'local', cols: 80, rows: 24 }), retryOpen)
+  assert.equal(JSON.parse(retryOpen.body.toString()).ok, true)
+  const retryClose = new FakeResponse()
+  await closeRoute.handler(fakeRequest('POST', { id: 'pty-retry-test' }), retryClose)
+  assert.equal(JSON.parse(retryClose.body.toString()).ok, true)
+  console.log('ok - a failed PTY open releases its id so the same id can be retried')
+
+  // Disposing the plugin while a PTY open is in flight must not leave an orphan session.
+  const disposeRoutes = []
+  const disposers = []
+  const disposeCtx = {
+    effect: (callback) => {
+      const dispose = callback()
+      if (typeof dispose === 'function') disposers.push(dispose)
+      return () => {}
+    },
+    webServer: {
+      register: (entry) => {
+        disposeRoutes.push(entry)
+        return () => {}
+      },
+      registerUpgrade: () => () => {},
+      tapIndex: () => () => {},
+    },
+    get: (key) => (key === 'connection' ? { requestRejection: () => undefined } : undefined),
+    inject: (names, callback) => callback({ effect: (fn) => fn(), tools: { register: () => () => {} } }),
+  }
+  apply(disposeCtx)
+  const disposedOpenRoute = disposeRoutes.find((entry) => entry.path === __test.PTY_OPEN_ROUTE)
+  assert.ok(disposedOpenRoute)
+  const inflightResponse = new FakeResponse()
+  const inflight = disposedOpenRoute.handler(fakeRequest('POST', { id: 'pty-dispose-test', host: 'local', cols: 80, rows: 24 }), inflightResponse)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  for (const dispose of disposers) dispose()
+  await inflight
+  const inflightPayload = JSON.parse(inflightResponse.body.toString())
+  assert.equal(inflightPayload.ok, false)
+  assert.match(inflightPayload.error.message, /not active/)
+  await new Promise((resolve) => setTimeout(resolve, 400))
+  assert.equal(__test.ptyTextSessions.has('pty-dispose-test'), false)
+  assert.equal(__test.ptyTextSessions.size, 0)
+  console.log('ok - disposing the plugin during an in-flight PTY open leaves no orphan session')
   restoreEnv()
 } finally {
   await rm(temp, { recursive: true, force: true })

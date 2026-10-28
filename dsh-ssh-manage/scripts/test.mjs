@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPaths } from '../lib/ssh-config.js'
-import { getPassword, hasPassword, removePassword, setPassword } from '../lib/vault.js'
+import { getPassword, hasPassword, listPasswordAliases, removePassword, setPassword } from '../lib/vault.js'
 import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
 import { __test as sshTest, execCommand } from '../lib/ssh-client.js'
 import { __test as indexTest } from '../index.js'
@@ -156,6 +156,90 @@ try {
   await removePassword(securePaths, 'local')
   assert.equal(await getPassword(securePaths, 'local'), null)
   console.log('ok - encrypted password vault and host metadata')
+
+  // Concurrency: key creation and every store mutation must be serialized.
+  for (let round = 0; round < 12; round += 1) {
+    const concurrentPaths = { stateDir: path.join(temp, '.concurrent', 'vault', String(round)) }
+    await Promise.all([
+      listPasswordAliases(concurrentPaths),
+      setPassword(concurrentPaths, 'alpha', 'pw-alpha'),
+      setPassword(concurrentPaths, 'beta', 'pw-beta'),
+    ])
+    assert.equal(await getPassword(concurrentPaths, 'alpha'), 'pw-alpha')
+    assert.equal(await getPassword(concurrentPaths, 'beta'), 'pw-beta')
+    assert.deepEqual((await listPasswordAliases(concurrentPaths)).sort(), ['alpha', 'beta'])
+  }
+  for (let round = 0; round < 12; round += 1) {
+    const concurrentPaths = { stateDir: path.join(temp, '.concurrent', 'metadata', String(round)) }
+    await Promise.all([
+      updateMetadata(concurrentPaths, 'alpha', { group: 'alpha' }),
+      updateMetadata(concurrentPaths, 'beta', { group: 'beta' }),
+    ])
+    const concurrentMetadata = await loadMetadata(concurrentPaths)
+    assert.equal(concurrentMetadata.entries.alpha.group, 'alpha')
+    assert.equal(concurrentMetadata.entries.beta.group, 'beta')
+  }
+  for (let round = 0; round < 12; round += 1) {
+    const concurrentConfigPaths = {
+      configPath: path.join(temp, '.concurrent', 'config', String(round), 'config'),
+      backupDir: path.join(temp, '.concurrent', 'config', String(round), 'backups'),
+    }
+    await mkdir(path.dirname(concurrentConfigPaths.configPath), { recursive: true })
+    await Promise.all([
+      saveSshHost({ paths: concurrentConfigPaths, host: { host: 'host-a', hostname: 'a.example.com' } }),
+      saveSshHost({ paths: concurrentConfigPaths, host: { host: 'host-b', hostname: 'b.example.com' } }),
+    ])
+    const concurrentHosts = await listSshHosts(concurrentConfigPaths)
+    assert.deepEqual(concurrentHosts.hosts.map((host) => host.host).sort(), ['host-a', 'host-b'])
+  }
+  console.log('ok - store serialization keeps concurrent vault, metadata and config writes')
+
+  // originalHost must be an existing, non-wildcard host: never rewrite "Host *".
+  const wildcardPaths = {
+    configPath: path.join(temp, '.wildcard', 'config'),
+    backupDir: path.join(temp, '.wildcard', 'backups'),
+  }
+  const wildcardSource = '# keep\nHost *\n  AddKeysToAgent yes\n\nHost real\n  HostName real.example.com\n'
+  await mkdir(path.dirname(wildcardPaths.configPath), { recursive: true })
+  await writeFile(wildcardPaths.configPath, wildcardSource, 'utf8')
+  await assert.rejects(
+    () => saveSshHost({ paths: wildcardPaths, originalHost: '*', host: { host: 'evil', hostname: 'evil.example.com' } }),
+    /Invalid SSH host alias/,
+  )
+  assert.equal(await readFile(wildcardPaths.configPath, 'utf8'), wildcardSource)
+  await assert.rejects(
+    () => saveSshHost({ paths: wildcardPaths, originalHost: 'prod-old', host: { host: 'evil', hostname: 'evil.example.com' } }),
+    /was not found/,
+  )
+  assert.equal(await readFile(wildcardPaths.configPath, 'utf8'), wildcardSource)
+  await saveSshHost({ paths: wildcardPaths, originalHost: 'real', host: { host: 'renamed', hostname: 'real.example.com' } })
+  const wildcardAfter = await readFile(wildcardPaths.configPath, 'utf8')
+  assert.match(wildcardAfter, /^Host renamed$/m)
+  assert.match(wildcardAfter, /^Host \*\n  AddKeysToAgent yes$/m)
+  console.log('ok - originalHost validation rejects wildcards and missing blocks without touching the config')
+
+  // A corrupt secondary store degrades the state response instead of breaking it.
+  const degradedPaths = {
+    configPath: path.join(temp, '.degraded', 'config'),
+    stateDir: path.join(temp, '.degraded', 'state'),
+    backupDir: path.join(temp, '.degraded', 'backups'),
+  }
+  await mkdir(path.dirname(degradedPaths.configPath), { recursive: true })
+  await writeFile(degradedPaths.configPath, 'Host stable\n  HostName stable.example.com\n', 'utf8')
+  await updateMetadata(degradedPaths, 'stable', { group: 'ops' })
+  await writeFile(path.join(degradedPaths.stateDir, 'vault.json'), '{ this is not json', 'utf8')
+  const degraded = await runAction(degradedPaths, 'state/refresh')
+  assert.equal(degraded.state.hosts.length, 1)
+  assert.equal(degraded.state.hosts[0].host, 'stable')
+  assert.equal(degraded.state.hosts[0].group, 'ops')
+  assert.equal(degraded.state.hosts[0].passwordConfigured, false)
+  assert.ok(Array.isArray(degraded.state.warnings))
+  assert.ok(degraded.state.warnings.some((warning) => warning.store === 'vault'))
+  await writeFile(path.join(degradedPaths.stateDir, 'hosts.json'), 'not json either', 'utf8')
+  const degradedMetadata = await runAction(degradedPaths, 'state/refresh')
+  assert.equal(degradedMetadata.state.hosts.length, 1)
+  assert.ok(degradedMetadata.state.warnings.some((warning) => warning.store === 'metadata'))
+  console.log('ok - state degrades gracefully when the vault or metadata store is corrupt')
 
   const rich = normalizeEntry('demo', {
     group: ' ops ',

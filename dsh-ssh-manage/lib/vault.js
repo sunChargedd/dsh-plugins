@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
-import { atomicWriteFile, loadOrCreateKey, readJson, storagePaths } from './storage.js'
+import { atomicWriteFile, loadOrCreateKey, readJson, storagePaths, withStoreLock } from './storage.js'
 
 const ALGORITHM = 'aes-256-gcm'
 const IV_BYTES = 12
@@ -41,7 +41,8 @@ export function decryptRecords(payload, key) {
   }
 }
 
-export async function loadVault(paths) {
+/** Read the vault without taking the store lock; callers that mutate must hold it. */
+async function loadVaultUnlocked(paths) {
   const resolved = storagePaths(paths)
   const key = await loadOrCreateKey(resolved)
   const payload = await readJson(resolved.vaultPath, null)
@@ -49,7 +50,8 @@ export async function loadVault(paths) {
   return { paths: resolved, key, records }
 }
 
-export async function saveVault(paths, records) {
+/** Write the vault without taking the store lock; callers that read-modify-write must hold it. */
+async function saveVaultUnlocked(paths, records) {
   const resolved = storagePaths(paths)
   const key = await loadOrCreateKey(resolved)
   const payload = encryptRecords(normalizeRecords(records), key)
@@ -57,22 +59,38 @@ export async function saveVault(paths, records) {
   return { saved: true }
 }
 
+function vaultLockKey(paths) {
+  return `vault:${storagePaths(paths).stateDir}`
+}
+
+export async function loadVault(paths) {
+  return loadVaultUnlocked(paths)
+}
+
+export async function saveVault(paths, records) {
+  return withStoreLock(vaultLockKey(paths), () => saveVaultUnlocked(paths, records))
+}
+
 export async function setPassword(paths, alias, password) {
   const key = assertAlias(alias)
   if (typeof password !== 'string' || password.length === 0) throw new Error('Password is required')
-  const vault = await loadVault(paths)
-  vault.records[key] = password
-  await saveVault(vault.paths, vault.records)
-  return { saved: true, host: key }
+  return withStoreLock(vaultLockKey(paths), async () => {
+    const vault = await loadVaultUnlocked(paths)
+    vault.records[key] = password
+    await saveVaultUnlocked(vault.paths, vault.records)
+    return { saved: true, host: key }
+  })
 }
 
 export async function removePassword(paths, alias) {
   const key = assertAlias(alias)
-  const vault = await loadVault(paths)
-  const removed = Object.prototype.hasOwnProperty.call(vault.records, key)
-  delete vault.records[key]
-  if (removed) await saveVault(vault.paths, vault.records)
-  return { removed }
+  return withStoreLock(vaultLockKey(paths), async () => {
+    const vault = await loadVaultUnlocked(paths)
+    const removed = Object.prototype.hasOwnProperty.call(vault.records, key)
+    delete vault.records[key]
+    if (removed) await saveVaultUnlocked(vault.paths, vault.records)
+    return { removed }
+  })
 }
 
 export async function hasPassword(paths, alias) {

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { withStoreLock } from './storage.js'
 
 const HOST_RE = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,63}$/
 const OPTION_NAMES = new Map([
@@ -246,13 +247,15 @@ export async function listSshHosts(paths = resolveSshPaths()) {
   return { configPath: paths.configPath, hosts: parsed.hosts, exists: text.length > 0 }
 }
 
-export async function saveSshHost({ paths = resolveSshPaths(), host, originalHost } = {}) {
+async function saveSshHostUnlocked({ paths, host, originalHost }) {
   const nextHost = validateHost(host)
   const aliasesProvided = Array.isArray(host?.aliases) && host.aliases.filter(Boolean).length > 0
   const previous = originalHost ? String(originalHost).trim() : null
+  if (previous !== null && (!HOST_RE.test(previous) || isWildPattern(previous))) throw new Error('Invalid SSH host alias')
   const text = await readConfig(paths)
   const parsed = parseSshConfig(text)
   const block = previous ? blockForHost(parsed, previous) : null
+  if (previous !== null && !block) throw new Error(`SSH host "${previous}" was not found`)
   const collision = blockForHost(parsed, nextHost.host)
   if (collision && (!block || collision.start !== block.start)) throw new Error(`SSH host "${nextHost.host}" already exists`)
   let lines = parsed.lines
@@ -274,7 +277,12 @@ export async function saveSshHost({ paths = resolveSshPaths(), host, originalHos
   return { saved: true, host: nextHost, backup }
 }
 
-export async function deleteSshHost({ paths = resolveSshPaths(), host } = {}) {
+export async function saveSshHost(options = {}) {
+  const paths = options?.paths ?? resolveSshPaths()
+  return withStoreLock(`config:${paths.configPath}`, () => saveSshHostUnlocked({ ...options, paths }))
+}
+
+async function deleteSshHostUnlocked({ paths, host }) {
   const name = String(host ?? '').trim()
   if (!HOST_RE.test(name) || isWildPattern(name)) throw new Error('Invalid SSH host alias')
   const text = await readConfig(paths)
@@ -287,6 +295,11 @@ export async function deleteSshHost({ paths = resolveSshPaths(), host } = {}) {
   const backup = await backupConfig(paths, text)
   await atomicWrite(paths, nextText)
   return { removed: true, backup }
+}
+
+export async function deleteSshHost(options = {}) {
+  const paths = options?.paths ?? resolveSshPaths()
+  return withStoreLock(`config:${paths.configPath}`, () => deleteSshHostUnlocked({ ...options, paths }))
 }
 
 export const __test = { patchHostBlock }

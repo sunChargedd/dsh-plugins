@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.2.1`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.2.2`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.1
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.2.2
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.2.1
+dsh plugin add dsh-ssh-manage@0.2.2
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -139,7 +139,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 
 | | 要求 |
 | --- | --- |
-| **DSH** | **`>=0.2.1-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
+| **DSH** | **`>=0.2.2-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.2-rc.3`） |
 | **Node.js** | `>=20`（跟随 DSH 内置运行时） |
 | **平台** | 实机验证 macOS；测试套件只依赖 Node 内置模块，可跨平台运行 |
 | **网络** | 需要能访问目标 SSH 主机的 22 端口（或配置的端口） |
