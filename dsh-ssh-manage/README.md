@@ -45,7 +45,7 @@
 
 - 点「连接」打开真正的 PTY shell，不是一条命令一条命令地执行。
 - 多台主机以标签页常驻：切换到其它 DSH 会话再回来，终端会重新附着到原来的 shell，并回放最近约 256 KB 输出；关闭标签、Host 退出，或 30 分钟无输出/输入/心跳才会结束会话。
-- xterm.js 6.0.0 渲染，支持 256 色、光标、滚动回看、选中复制、粘贴、窗口 resize。
+- xterm.js 6.0.0 渲染，支持 256 色、光标、滚动回看、选中复制、粘贴、窗口 resize、终端内搜索、字号调整和右键复制/粘贴菜单。
 - 终端主题跟随 DSH 明暗主题；会话顶部有地址、密码状态、测试连接、文件、详情、清屏、关闭等快捷操作。
 - 输出走同源 HTTP/SSE 长连接，输入 / 尺寸 / 关闭走同源 HTTP POST；插件同时保留经过测试的 WebSocket 备用通道。
 - 断线或后端未加载时显示明确的状态与「重新连接」，不会静默卡死。
@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.0`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.1`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.0
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.1
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.0
+dsh plugin add dsh-ssh-manage@0.3.1
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -139,7 +139,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 
 | | 要求 |
 | --- | --- |
-| **DSH** | **`>=0.2.1-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.1`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
 | **Node.js** | `>=20`（跟随 DSH 内置运行时） |
 | **平台** | 实机验证 macOS；测试套件只依赖 Node 内置模块，可跨平台运行 |
 | **网络** | 需要能访问目标 SSH 主机的 22 端口（或配置的端口） |
@@ -214,7 +214,7 @@ npm test
 | `node scripts/test-sse.mjs` | 真实 ssh2 mock 服务器上的 HTTP/SSE PTY 端到端 + 401 鉴权 |
 | `npm test` | 以上全部 |
 
-终端组件使用随插件分发的 xterm.js 6.0.0（MIT，见 `assets/LICENSE.xterm`）与 @xterm/addon-fit 0.11.0（MIT，见 `assets/LICENSE.addon-fit`）。
+终端组件使用随插件分发的 xterm.js 6.0.0（MIT，见 `assets/LICENSE.xterm`）、@xterm/addon-fit 0.11.0（MIT，见 `assets/LICENSE.addon-fit`）与 @xterm/addon-search 0.16.0（MIT，见 `assets/LICENSE.addon-search`）。
 
 ## 已知限制
 
@@ -224,7 +224,7 @@ npm test
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。
-- **xterm 资源**：首次打开会加载约 500 KB 的 xterm.js 资源（本地同源，不访问 CDN）。
+- **xterm 资源**：首次打开会加载约 500 KB 的 xterm.js 基础资源；搜索组件按需加载，总计约 556 KiB（本地同源，不访问 CDN）。
 
 ## 参与贡献
 

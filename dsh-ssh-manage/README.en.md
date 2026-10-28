@@ -45,7 +45,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 
 - Click "Connect" to open a real PTY shell, not a one-command-at-a-time console.
 - Multiple hosts stay as tabs: switching to another DSH session and coming back re-attaches to the existing shell and replays roughly the last 256 KB of output; only closing the tab ends the session.
-- xterm.js 6.0.0 rendering with 256 colors, cursor, scrollback, selection copy, paste and resize.
+- xterm.js 6.0.0 rendering with 256 colors, cursor, scrollback, selection copy, paste, resize, in-terminal search, font-size controls and a right-click copy/paste menu.
 - Terminal theme follows the DSH light/dark theme; the session bar has quick actions for address, password status, test, files, details, clear and close.
 - Output is streamed over a same-origin HTTP/SSE connection; input, resize and close use same-origin HTTP POST. A tested WebSocket channel is kept as a fallback.
 - Clear status and a "Reconnect" button when the backend is unavailable — no silent hang.
@@ -96,16 +96,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.0`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.1`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.0
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.1
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.0
+dsh plugin add dsh-ssh-manage@0.3.1
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -137,7 +137,7 @@ and make sure the package is resolvable by the profile (for example `link:` to t
 
 | | Requirement |
 | --- | --- |
-| **DSH** | **`>=0.2.1-rc.3 <0.3.0`** (validated on DSH Desktop `0.2.1-rc.3`) |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.1`** (validated on DSH Desktop `0.2.1-rc.3`) |
 | **Node.js** | `>=20` (follows the DSH runtime) |
 | **Platform** | Validated on macOS; the test suite only uses Node built-ins and runs cross-platform |
 | **Network** | Reachable SSH port (22 by default, or the configured port) |
@@ -211,7 +211,7 @@ npm test
 | `node scripts/test-sse.mjs` | HTTP/SSE PTY end-to-end against a real ssh2 mock server + 401 auth |
 | `npm test` | All of the above |
 
-The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`) and @xterm/addon-fit 0.11.0 (MIT, see `assets/LICENSE.addon-fit`).
+The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xterm/addon-fit 0.11.0 (MIT, see `assets/LICENSE.addon-fit`) and @xterm/addon-search 0.16.0 (MIT, see `assets/LICENSE.addon-search`).
 
 ## Known limitations
 
@@ -221,7 +221,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`) and 
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.
-- **xterm assets**: the first terminal open loads about 500 KB of xterm.js from the same origin (no CDN).
+- **xterm assets**: the first terminal open loads about 500 KB of xterm.js basics; the search addon loads on demand, about 556 KiB total from the same origin (no CDN).
 
 ## Contributing
 

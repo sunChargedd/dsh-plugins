@@ -161,6 +161,21 @@ window.__ModuleLoader__.load({
       'terminal.openDetails': ['打开主机详情', 'Open details'],
       'terminal.assetsError': ['终端组件加载失败：{message}。如果刚更新插件，请重启 DSH 后重试。', 'Could not load the terminal component: {message}. If the plugin was just updated, restart DSH and retry.'],
       'terminal.resyncFailed': ['终端输出曾中断，已尝试重新同步；如仍异常请重连。', 'Terminal output was interrupted; attempted a resync. Reconnect if problems persist.'],
+      'terminal.search': ['搜索终端', 'Search terminal'],
+      'terminal.searchNext': ['下一个', 'Next match'],
+      'terminal.searchPrevious': ['上一个', 'Previous match'],
+      'terminal.searchCase': ['区分大小写', 'Match case'],
+      'terminal.searchClose': ['关闭搜索', 'Close search'],
+      'terminal.fontSmaller': ['缩小字号', 'Smaller terminal font'],
+      'terminal.fontLarger': ['放大字号', 'Larger terminal font'],
+      'terminal.menu.copy': ['复制', 'Copy'],
+      'terminal.menu.paste': ['粘贴', 'Paste'],
+      'terminal.menu.selectAll': ['全选', 'Select all'],
+      'terminal.menu.clear': ['清屏', 'Clear'],
+      'terminal.menu.title': ['终端菜单', 'Terminal menu'],
+      'terminal.searchUnavailable': ['终端搜索加载失败，请重启 DSH 后重试。', 'Terminal search failed to load; restart DSH and retry.'],
+      'terminal.copyFailed': ['复制失败，请检查浏览器剪贴板权限。', 'Copy failed; check browser clipboard permissions.'],
+      'terminal.pasteFailed': ['粘贴失败，请检查浏览器剪贴板权限。', 'Paste failed; check browser clipboard permissions.'],
       'terminal.backendHint': ['无法连接到插件后端。如果刚更新插件，请重启 DSH 后重试。', 'Cannot reach the plugin backend. If the plugin was just updated, restart DSH and retry.'],
       'terminal.passwordMissing': ['该主机还没有保存密码，请先打开「主机详情」设置服务器密码。', 'No password stored for this host. Open Details and set the server password first.'],
       'drawer.exit': ['退出码 {code}', 'exit {code}'],
@@ -1152,6 +1167,25 @@ window.__ModuleLoader__.load({
       }
     }
 
+    const TERMINAL_FONT_KEY = 'dsh-ssh-manage:terminal-font-size'
+    const TERMINAL_FONT_MIN = 10
+    const TERMINAL_FONT_MAX = 20
+
+    function clampTerminalFontSize(value) {
+      const numeric = Number(value)
+      if (!Number.isFinite(numeric)) return 13
+      return Math.min(TERMINAL_FONT_MAX, Math.max(TERMINAL_FONT_MIN, Math.round(numeric)))
+    }
+
+    function readTerminalFontSize() {
+      try {
+        const stored = window.localStorage.getItem(TERMINAL_FONT_KEY)
+        return stored === null ? 13 : clampTerminalFontSize(stored)
+      } catch {
+        return 13
+      }
+    }
+
     function App({ ctx }) {
       const t = useT(ctx)
       const localeId = useLocaleId(ctx)
@@ -1187,6 +1221,7 @@ window.__ModuleLoader__.load({
       )
       const [activeSessionId, setActiveSessionId] = React.useState(() => persistentPanelState.activeSessionId)
       const [treeWidth, setTreeWidth] = React.useState(readTreeWidth)
+      const [terminalFontSize, setTerminalFontSize] = React.useState(readTerminalFontSize)
       const [clearSignals, setClearSignals] = React.useState({})
       const [sessionStates, setSessionStates] = React.useState({})
       const toastTimer = React.useRef(null)
@@ -1225,6 +1260,12 @@ window.__ModuleLoader__.load({
           window.localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth))
         } catch {}
       }, [treeWidth])
+
+      React.useEffect(() => {
+        try {
+          window.localStorage.setItem(TERMINAL_FONT_KEY, String(terminalFontSize))
+        } catch {}
+      }, [terminalFontSize])
 
       React.useEffect(() => {
         for (const session of sessions) ptyActiveIds.add(session.id)
@@ -1717,6 +1758,8 @@ window.__ModuleLoader__.load({
         groupsCloseGuard,
         treeWidth,
         setTreeWidth,
+        terminalFontSize,
+        setTerminalFontSize,
         sessions,
         activeSessionId,
         sessionStates,
@@ -2836,6 +2879,24 @@ window.__ModuleLoader__.load({
             h(
               IconButton,
               {
+                title: t('terminal.fontSmaller'),
+                disabled: model.terminalFontSize <= TERMINAL_FONT_MIN,
+                onClick: () => model.setTerminalFontSize((value) => Math.max(TERMINAL_FONT_MIN, value - 1)),
+              },
+              h('span', { className: 'ssh-fontGlyph' }, 'A−'),
+            ),
+            h(
+              IconButton,
+              {
+                title: t('terminal.fontLarger'),
+                disabled: model.terminalFontSize >= TERMINAL_FONT_MAX,
+                onClick: () => model.setTerminalFontSize((value) => Math.min(TERMINAL_FONT_MAX, value + 1)),
+              },
+              h('span', { className: 'ssh-fontGlyph' }, 'A+'),
+            ),
+            h(
+              IconButton,
+              {
                 title: t('session.clear'),
                 disabled: !activeSession,
                 onClick: () => clearSession(activeSession.id),
@@ -2869,6 +2930,7 @@ window.__ModuleLoader__.load({
                     model,
                     host,
                     sessionId: session.id,
+                    fontSize: model.terminalFontSize,
                     clearSignal: clearSignals[session.id] ?? 0,
                     active: isVisible && session.id === activeSession.id,
                   })
@@ -2969,6 +3031,14 @@ window.__ModuleLoader__.load({
       css: 'dsh-ssh-manage-xterm-css',
       script: 'dsh-ssh-manage-xterm-script',
       fit: 'dsh-ssh-manage-xterm-fit',
+      search: 'dsh-ssh-manage-xterm-search',
+    }
+
+    function terminalAssetReady(id) {
+      if (id === TERMINAL_ASSET_IDS.script) return Boolean(window.Terminal)
+      if (id === TERMINAL_ASSET_IDS.fit) return Boolean(window.FitAddon && window.FitAddon.FitAddon)
+      if (id === TERMINAL_ASSET_IDS.search) return Boolean(window.SearchAddon && window.SearchAddon.SearchAddon)
+      return false
     }
     let terminalAssetsPromise = null
 
@@ -2976,10 +3046,7 @@ window.__ModuleLoader__.load({
       return new Promise((resolve, reject) => {
         const existing = document.getElementById(id)
         if (existing) {
-          const ready =
-            id === TERMINAL_ASSET_IDS.script
-              ? Boolean(window.Terminal)
-              : Boolean(window.FitAddon && window.FitAddon.FitAddon)
+          const ready = terminalAssetReady(id)
           if (ready) {
             resolve()
             return
@@ -3003,8 +3070,12 @@ window.__ModuleLoader__.load({
     }
 
     function loadTerminalAssets() {
-      if (window.Terminal && window.FitAddon && window.FitAddon.FitAddon) {
-        return Promise.resolve({ Terminal: window.Terminal, FitAddon: window.FitAddon.FitAddon })
+      if (window.Terminal && window.FitAddon && window.FitAddon.FitAddon && window.SearchAddon?.SearchAddon) {
+        return Promise.resolve({
+          Terminal: window.Terminal,
+          FitAddon: window.FitAddon.FitAddon,
+          SearchAddon: window.SearchAddon.SearchAddon,
+        })
       }
       if (terminalAssetsPromise) return terminalAssetsPromise
       if (!document.getElementById(TERMINAL_ASSET_IDS.css)) {
@@ -3016,9 +3087,17 @@ window.__ModuleLoader__.load({
       }
       terminalAssetsPromise = loadScriptAsset(TERMINAL_ASSET_IDS.script, '/dsh-ssh-manage/assets/xterm.js')
         .then(() => loadScriptAsset(TERMINAL_ASSET_IDS.fit, '/dsh-ssh-manage/assets/addon-fit.js'))
+        // Search is optional: a missing/blocked addon must not break the terminal.
+        .then(() => loadScriptAsset(TERMINAL_ASSET_IDS.search, '/dsh-ssh-manage/assets/addon-search.js').catch(() => null))
         .then(() => {
-          if (!window.Terminal || !window.FitAddon || !window.FitAddon.FitAddon) throw new Error('Terminal assets did not initialize')
-          return { Terminal: window.Terminal, FitAddon: window.FitAddon.FitAddon }
+          if (!window.Terminal || !window.FitAddon || !window.FitAddon.FitAddon) {
+            throw new Error('Terminal assets did not initialize')
+          }
+          return {
+            Terminal: window.Terminal,
+            FitAddon: window.FitAddon.FitAddon,
+            SearchAddon: window.SearchAddon?.SearchAddon ?? null,
+          }
         })
         .catch((error) => {
           terminalAssetsPromise = null
@@ -3315,6 +3394,29 @@ window.__ModuleLoader__.load({
       void ptyPost(PTY_CLEAR_ROUTE, { id }, 15_000).catch(() => {})
     }
 
+    async function copyTextToClipboard(text) {
+      if (!text) return false
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(text)
+          return true
+        }
+      } catch {}
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        const copied = document.execCommand('copy')
+        textarea.remove()
+        return copied
+      } catch {
+        return false
+      }
+    }
+
     function decodeBase64(text) {
       const binary = atob(String(text ?? ''))
       const bytes = new Uint8Array(binary.length)
@@ -3322,15 +3424,25 @@ window.__ModuleLoader__.load({
       return bytes
     }
 
-    function TerminalPane({ model, host, sessionId, active, clearSignal }) {
+    function TerminalPane({ model, host, sessionId, active, clearSignal, fontSize }) {
       const { t } = model
       const hostRef = React.useRef(host)
       hostRef.current = host
       const containerRef = React.useRef(null)
       const termRef = React.useRef(null)
       const fitRef = React.useRef(null)
+      const searchAddonRef = React.useRef(null)
+      const searchInputRef = React.useRef(null)
+      const menuRef = React.useRef(null)
+      const fontSizeRef = React.useRef(fontSize)
+      fontSizeRef.current = fontSize
       const activeRef = React.useRef(active === true)
       const [status, setStatus] = React.useState('loading')
+      const [searchOpen, setSearchOpen] = React.useState(false)
+      const searchOpenRef = React.useRef(false)
+      const [searchText, setSearchText] = React.useState('')
+      const [searchCase, setSearchCase] = React.useState(false)
+      const [menu, setMenu] = React.useState(null)
       const [message, setMessage] = React.useState('')
       const [retryToken, setRetryToken] = React.useState(0)
       const clearRequested = React.useRef(false)
@@ -3369,6 +3481,131 @@ window.__ModuleLoader__.load({
           termRef.current.focus()
         } catch {}
       }, [clearSignal])
+
+      React.useEffect(() => {
+        const term = termRef.current
+        if (!term) return
+        try {
+          if (term.options.fontSize !== fontSize) {
+            term.options.fontSize = fontSize
+            fitRef.current?.fit()
+          }
+        } catch {}
+      }, [fontSize])
+
+      const openSearch = () => {
+        if (!searchAddonRef.current) {
+          try { model.notify?.(t('terminal.searchUnavailable'), 'error') } catch {}
+          return
+        }
+        searchOpenRef.current = true
+        setSearchOpen(true)
+        requestAnimationFrame(() => searchInputRef.current?.focus())
+      }
+
+      const closeSearch = () => {
+        searchOpenRef.current = false
+        setSearchOpen(false)
+        try { searchAddonRef.current?.clearDecorations?.() } catch {}
+        try { termRef.current?.focus() } catch {}
+      }
+
+      const findInTerminal = (direction, caseSensitive = searchCase) => {
+        const addon = searchAddonRef.current
+        const text = searchText.trim()
+        if (!addon) return
+        try {
+          if (text === '') addon.clearDecorations?.()
+          else if (direction < 0) addon.findPrevious(text, { caseSensitive })
+          else addon.findNext(text, { caseSensitive })
+        } catch {}
+      }
+
+      const updateSearchText = (value) => {
+        setSearchText(value)
+        const addon = searchAddonRef.current
+        if (!addon) return
+        try {
+          if (value.trim() === '') addon.clearDecorations?.()
+          else addon.findNext(value.trim(), { caseSensitive: searchCase })
+        } catch {}
+      }
+
+      const terminalMenuAction = (action) => {
+        const term = termRef.current
+        setMenu(null)
+        if (!term) return
+        const refocus = () => {
+          requestAnimationFrame(() => {
+            try { termRef.current?.focus() } catch {}
+          })
+        }
+        if (action === 'selectAll') {
+          try { term.selectAll() } catch {}
+          refocus()
+          return
+        }
+        if (action === 'clear') {
+          // Route through App so clearRequested/clearEpoch and the host buffer
+          // stay in sync with the session-bar clear button.
+          if (typeof model.clearSession === 'function') model.clearSession(sessionId)
+          else clearPtySession(sessionId)
+          try { term.clear(); term.write('\x1b[H\x1b[2J') } catch {}
+          refocus()
+          return
+        }
+        if (action === 'copy') {
+          const text = term.getSelection()
+          void copyTextToClipboard(text).then((ok) => {
+            if (!ok) {
+              try { model.notify?.(t('terminal.copyFailed'), 'error') } catch {}
+            }
+            refocus()
+          })
+          return
+        }
+        if (action === 'paste') {
+          if (!navigator.clipboard?.readText) {
+            try { model.notify?.(t('terminal.pasteFailed'), 'error') } catch {}
+            refocus()
+            return
+          }
+          navigator.clipboard.readText().then((text) => {
+            if (text) {
+              try { term.paste(text) } catch {}
+            }
+            refocus()
+          }).catch(() => {
+            try { model.notify?.(t('terminal.pasteFailed'), 'error') } catch {}
+            refocus()
+          })
+        }
+      }
+
+      React.useEffect(() => {
+        if (!menu) return undefined
+        const close = () => setMenu(null)
+        const onKey = (event) => {
+          if (event.key !== 'Escape') return
+          event.preventDefault()
+          event.stopPropagation()
+          setMenu(null)
+          try { termRef.current?.focus() } catch {}
+        }
+        const onDown = (event) => {
+          if (menuRef.current && menuRef.current.contains(event.target)) return
+          setMenu(null)
+        }
+        document.addEventListener('mousedown', onDown)
+        document.addEventListener('keydown', onKey, true)
+        requestAnimationFrame(() => {
+          menuRef.current?.querySelector('button')?.focus()
+        })
+        return () => {
+          document.removeEventListener('mousedown', onDown)
+          document.removeEventListener('keydown', onKey, true)
+        }
+      }, [menu])
 
       React.useEffect(() => {
         const container = containerRef.current
@@ -3434,7 +3671,7 @@ window.__ModuleLoader__.load({
           term = new Terminal({
             cursorBlink: true,
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-            fontSize: 13,
+            fontSize: fontSizeRef.current ?? 13,
             lineHeight: 1.2,
             scrollback: 5000,
             allowProposedApi: true,
@@ -3444,9 +3681,39 @@ window.__ModuleLoader__.load({
           })
           fit = new FitAddon()
           term.loadAddon(fit)
+          if (assets.SearchAddon) {
+            const searchAddon = new assets.SearchAddon()
+            term.loadAddon(searchAddon)
+            searchAddonRef.current = searchAddon
+          }
           term.open(container)
           termRef.current = term
           fitRef.current = fit
+          term.attachCustomKeyEventHandler((event) => {
+            if (event.type !== 'keydown') return true
+            const meta = event.metaKey || event.ctrlKey
+            if (meta && event.key.toLowerCase() === 'f') {
+              event.preventDefault()
+              openSearch()
+              return false
+            }
+            if (meta && (event.key === '=' || event.key === '+')) {
+              event.preventDefault()
+              model.setTerminalFontSize((value) => Math.min(TERMINAL_FONT_MAX, value + 1))
+              return false
+            }
+            if (meta && (event.key === '-' || event.key === '_')) {
+              event.preventDefault()
+              model.setTerminalFontSize((value) => Math.max(TERMINAL_FONT_MIN, value - 1))
+              return false
+            }
+            if (event.key === 'Escape' && searchOpenRef.current) {
+              event.preventDefault()
+              closeSearch()
+              return false
+            }
+            return true
+          })
           try { fit.fit() } catch {}
           themeUnsub = subscribeTerminalTheme(() => {
             if (removed || !term) return
@@ -3691,6 +3958,7 @@ window.__ModuleLoader__.load({
           }
           termRef.current = null
           fitRef.current = null
+          searchAddonRef.current = null
         }
       }, [sessionId, retryToken])
 
@@ -3698,8 +3966,81 @@ window.__ModuleLoader__.load({
       const showOverlay = status !== 'ready'
       return h(
         'div',
-        { className: 'ssh-terminalPane' },
+        {
+          className: 'ssh-terminalPane',
+          onContextMenu: (event) => {
+            if (!termRef.current || status !== 'ready') return
+            if (event.target?.closest?.('.ssh-terminalSearch')) return
+            event.preventDefault()
+            const rect = event.currentTarget.getBoundingClientRect()
+            setMenu({
+              x: Math.max(0, Math.min(event.clientX - rect.left, rect.width - 170)),
+              y: Math.max(0, Math.min(event.clientY - rect.top, rect.height - 150)),
+            })
+          },
+          onMouseDown: () => setMenu(null),
+        },
         h('div', { className: 'ssh-terminalHost', ref: containerRef }),
+        searchOpen
+          ? h(
+              'div',
+              {
+                className: 'ssh-terminalSearch',
+                onMouseDown: (event) => event.stopPropagation(),
+              },
+              h(IconSearch, { size: 13 }),
+              h('input', {
+                ref: searchInputRef,
+                className: 'ssh-terminalSearchInput',
+                value: searchText,
+                placeholder: t('terminal.search'),
+                'aria-label': t('terminal.search'),
+                onChange: (event) => updateSearchText(event.target.value),
+                onKeyDown: (event) => {
+                  event.stopPropagation()
+                  if (event.key === 'Escape') closeSearch()
+                  else if (event.key === 'Enter') findInTerminal(event.shiftKey ? -1 : 1)
+                },
+              }),
+              h('button', {
+                type: 'button',
+                className: cx('ssh-terminalSearchBtn', searchCase && 'on'),
+                title: t('terminal.searchCase'),
+                'aria-pressed': searchCase,
+                onMouseDown: (event) => event.preventDefault(),
+                onClick: () => {
+                  const next = !searchCase
+                  setSearchCase(next)
+                  if (searchText.trim()) findInTerminal(1, next)
+                },
+              }, 'Aa'),
+              h('button', { type: 'button', className: 'ssh-terminalSearchBtn', title: t('terminal.searchPrevious'), 'aria-label': t('terminal.searchPrevious'), onMouseDown: (event) => event.preventDefault(), onClick: () => findInTerminal(-1) }, h(IconChevronLeft, { size: 12 })),
+              h('button', { type: 'button', className: 'ssh-terminalSearchBtn', title: t('terminal.searchNext'), 'aria-label': t('terminal.searchNext'), onMouseDown: (event) => event.preventDefault(), onClick: () => findInTerminal(1) }, h(IconChevronRight, { size: 12 })),
+              h('button', { type: 'button', className: 'ssh-terminalSearchBtn', title: t('terminal.searchClose'), 'aria-label': t('terminal.searchClose'), onClick: closeSearch }, h(IconClose, { size: 12 })),
+            )
+          : null,
+        menu
+          ? h(
+              'div',
+              {
+                ref: menuRef,
+                className: 'ssh-terminalMenu',
+                role: 'menu',
+                'aria-label': t('terminal.menu.title'),
+                style: { left: menu.x, top: menu.y },
+                onMouseDown: (event) => event.stopPropagation(),
+              },
+              ['copy', 'paste', 'selectAll', 'clear'].map((action) =>
+                h('button', {
+                  key: action,
+                  type: 'button',
+                  role: 'menuitem',
+                  className: 'ssh-terminalMenuItem',
+                  onClick: () => terminalMenuAction(action),
+                }, t(`terminal.menu.${action}`)),
+              ),
+            )
+          : null,
         showOverlay
           ? h(
               'div',
@@ -4949,6 +5290,16 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-terminalOverlayActions{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
 .ssh-sessionLayer{flex:1;min-height:0;display:flex;flex-direction:column;background:var(--ssh-bg)}
 .ssh-sessionState{width:6px;height:6px;border-radius:50%;background:var(--ssh-dim);flex:0 0 auto}
+.ssh-fontGlyph{font-size:10.5px;font-weight:600;letter-spacing:-.4px}
+.ssh-terminalSearch{position:absolute;top:8px;right:18px;z-index:5;max-width:calc(100% - 24px);display:flex;align-items:center;gap:5px;padding:5px 7px;border:.5px solid var(--ssh-border-strong);border-radius:10px;background:var(--ssh-layer-1);box-shadow:var(--ssh-shadow);color:var(--ssh-text-3)}
+.ssh-terminalSearchInput{width:min(180px,42vw);max-width:100%;height:24px;padding:0 7px;border:.5px solid var(--ssh-border);border-radius:6px;background:var(--ssh-bg);color:var(--ssh-text);font:inherit;font-size:12px;outline:none}
+.ssh-terminalSearchInput:focus{border-color:var(--ssh-brand)}
+.ssh-terminalSearchBtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;height:24px;min-width:24px;padding:0 5px;border:0;border-radius:6px;background:transparent;color:var(--ssh-text-2);font:inherit;font-size:11px;cursor:pointer}
+.ssh-terminalSearchBtn:hover{background:var(--ssh-hover);color:var(--ssh-text)}
+.ssh-terminalSearchBtn.on{background:color-mix(in srgb,var(--ssh-brand) 15%,transparent);color:var(--ssh-brand)}
+.ssh-terminalMenu{position:absolute;z-index:7;min-width:150px;padding:4px;border:.5px solid var(--ssh-border-strong);border-radius:9px;background:var(--ssh-layer-1);box-shadow:var(--ssh-shadow)}
+.ssh-terminalMenuItem{appearance:none;display:flex;align-items:center;width:100%;height:28px;padding:0 9px;border:0;border-radius:6px;background:transparent;color:var(--ssh-text-2);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.ssh-terminalMenuItem:hover{background:var(--ssh-hover);color:var(--ssh-text)}
 .ssh-sessionState.loading,.ssh-sessionState.connecting{background:var(--ssh-warn)}
 .ssh-sessionState.ready{background:var(--ssh-success)}
 .ssh-sessionState.error,.ssh-sessionState.closed{background:var(--ssh-danger)}

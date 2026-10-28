@@ -215,7 +215,7 @@ const ctx = {
   inject: (names, callback) => callback({ effect: (fn) => fn(), tools: { register: () => () => {} } }),
 }
 apply(ctx)
-const assetPaths = ['/dsh-ssh-manage/assets/xterm.js', '/dsh-ssh-manage/assets/xterm.css', '/dsh-ssh-manage/assets/addon-fit.js']
+const assetPaths = ['/dsh-ssh-manage/assets/xterm.js', '/dsh-ssh-manage/assets/xterm.css', '/dsh-ssh-manage/assets/addon-fit.js', '/dsh-ssh-manage/assets/addon-search.js']
 for (const assetPath of assetPaths) assert.ok(routes.some((route) => route.path === assetPath), `missing asset route ${assetPath}`)
 assert.ok(routes.some((route) => route.path === '/dsh-ssh-manage/state'))
 assert.ok(routes.some((route) => route.path === '/dsh-ssh-manage/action'))

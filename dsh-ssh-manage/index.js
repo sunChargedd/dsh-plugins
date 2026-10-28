@@ -28,6 +28,7 @@ const ASSETS = [
   { path: '/dsh-ssh-manage/assets/xterm.js', file: 'xterm.js', contentType: 'text/javascript; charset=utf-8' },
   { path: '/dsh-ssh-manage/assets/xterm.css', file: 'xterm.css', contentType: 'text/css; charset=utf-8' },
   { path: '/dsh-ssh-manage/assets/addon-fit.js', file: 'addon-fit.js', contentType: 'text/javascript; charset=utf-8' },
+  { path: '/dsh-ssh-manage/assets/addon-search.js', file: 'addon-search.js', contentType: 'text/javascript; charset=utf-8' },
 ]
 const MAX_BODY_BYTES = 16 * 1024 * 1024
 const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download']
