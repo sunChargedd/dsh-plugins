@@ -1,12 +1,13 @@
 import { readJson, storagePaths, withStoreLock, atomicWriteFile } from './storage.js'
 
-const DEFAULTS = Object.freeze({ approval: 'audit', readonly: false })
+const DEFAULTS = Object.freeze({ approval: 'audit', readonly: false, healthCheck: false })
 
 function normalize(value) {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   return {
     approval: input.approval === 'ask' ? 'ask' : 'audit',
     readonly: input.readonly === true,
+    healthCheck: input.healthCheck === true,
   }
 }
 

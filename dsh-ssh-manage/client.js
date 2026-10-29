@@ -342,6 +342,8 @@ window.__ModuleLoader__.load({
       'settings.approvalAudit': ['只审计', 'Audit only'],
       'settings.approvalAsk': ['执行前询问', 'Ask before executing'],
       'settings.approvalHint': ['“执行前询问”会通过 DSH 审批弹窗确认 exec、批量命令和破坏性 SFTP 操作。', 'Ask before executing uses the DSH approval prompt for exec, batch commands and destructive SFTP.'],
+      'settings.healthCheck': ['定时健康检查（5 分钟，页面打开时）', 'Scheduled health check (every 5 minutes while open)'],
+      'state.healthOffline': ['主机离线：{hosts}', 'Hosts offline: {hosts}'],
       'settings.audit': ['最近审计', 'Recent audit'],
       'settings.auditEmpty': ['暂无 Agent 操作记录。', 'No Agent operations recorded yet.'],
       'settings.appearance': ['外观', 'Appearance'],
@@ -1684,6 +1686,32 @@ window.__ModuleLoader__.load({
         if (value.state) applySnapshot(value.state)
         notify(t('state.healthChecked', { online: value.online ?? 0, offline: value.offline ?? 0 }), value.offline ? 'error' : 'success')
       }
+
+      const lastOfflineRef = React.useRef(new Set())
+      React.useEffect(() => {
+        if (snapshot?.agentSettings?.healthCheck !== true) return undefined
+        let cancelled = false
+        const run = async () => {
+          if (cancelled || document.hidden) return
+          try {
+            const value = await callAction('health/check-all', {})
+            if (cancelled) return
+            if (value.state) applySnapshot(value.state)
+            const offline = new Set((value.results ?? []).filter((item) => !item.ok).map((item) => item.host))
+            const newlyOffline = [...offline].filter((host) => !lastOfflineRef.current.has(host))
+            if (newlyOffline.length > 0) {
+              notify(t('state.healthOffline', { hosts: newlyOffline.join(', ') }), 'error')
+            }
+            lastOfflineRef.current = offline
+          } catch {}
+        }
+        const timer = setInterval(() => void run(), 5 * 60_000)
+        void run()
+        return () => {
+          cancelled = true
+          clearInterval(timer)
+        }
+      }, [snapshot?.agentSettings?.healthCheck, applySnapshot, notify, t])
 
       async function inspectHost(host) {
         const value = await withPending(`inspect:${host.host}`, () => callAction('ssh/inspect', { host: host.host }))
@@ -6223,6 +6251,15 @@ window.__ModuleLoader__.load({
                   checked: agentSettings.readonly,
                   onChange: (value) => void updateAgentSettings({ readonly: value }),
                   label: t('settings.readonly'),
+                }),
+              ),
+              h(
+                'div',
+                { className: 'ssh-settingRow' },
+                h(Switch, {
+                  checked: agentSettings.healthCheck === true,
+                  onChange: (value) => void updateAgentSettings({ healthCheck: value }),
+                  label: t('settings.healthCheck'),
                 }),
               ),
               h(

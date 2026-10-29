@@ -545,6 +545,8 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   assert.ok(auditEntries.length >= 1)
   assert.equal(auditEntries[0].action, 'inspect_host')
   assert.equal((await loadAgentSettings(routePaths)).readonly, false)
+  await saveAgentSettings(routePaths, { healthCheck: true })
+  assert.equal((await loadAgentSettings(routePaths)).healthCheck, true)
   console.log('ok - agent settings enforce read-only mode and write audit entries')
   const slashList = await indexTest.handleSshCommand(routePaths, '')
   assert.equal(slashList.kind, 'success')

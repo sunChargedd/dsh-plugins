@@ -22,7 +22,7 @@
 
 `dsh-ssh-manage` 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的 Web 插件。它把 `~/.ssh/config` 里的主机变成 DSH 侧边栏里可管理、可连接、可运维的对象：
 
-- **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检、一键健康检查（在线/离线/延迟）、按主机保存快捷命令并一键执行；SSH 别名全局唯一，不同分组如需同名请使用可重复的“显示名称”；
+- **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检、一键健康检查（在线/离线/延迟）、可选 5 分钟定时检查与离线告警、按主机保存快捷命令并一键执行；SSH 别名全局唯一，不同分组如需同名请使用可重复的“显示名称”；
 - **DSH Agent 集成**：向 DSH 系统提示注入精简主机目录（别名/分组/显示名），地址等详情由 `list_hosts` 按需获取以控制 token；Agent 可直接用 `ssh_manager` 执行命令、批量命令、巡检和 SFTP 操作；支持 DSH 斜杠命令 `/ssh <alias> <command>` 直接执行、`/ssh` 列出主机；
 - **Agent 安全**：设置页可开启只读模式；危险操作可选“执行前询问”走 DSH 审批；exec、批量命令、SFTP 写操作和主机变更会写入本地审计日志（自动脱敏命令中的密码/token）；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
@@ -102,16 +102,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.23`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.24`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.23
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.24
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.23
+dsh plugin add dsh-ssh-manage@0.3.24
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
