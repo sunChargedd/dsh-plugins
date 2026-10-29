@@ -551,6 +551,13 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   assert.match(slashList.text, /renamed/)
   const slashUnknown = await indexTest.handleSshCommand(routePaths, 'missing-host true')
   assert.equal(slashUnknown.kind, 'error')
+  const savedSnippet = await runAction(routePaths, 'snippet/save', { snippet: { name: 'List files', command: 'ls -la', host: 'renamed' } })
+  assert.equal(savedSnippet.snippets.length, 1)
+  assert.equal(savedSnippet.snippets[0].name, 'List files')
+  assert.equal((await runAction(routePaths, 'snippet/list', {}).catch(() => null)), null) // no list action; state carries snippets
+  const snippetState = await runAction(routePaths, 'state/refresh', {})
+  assert.equal(snippetState.state.snippets[0].command, 'ls -la')
+  await runAction(routePaths, 'snippet/delete', { id: savedSnippet.snippets[0].id })
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))

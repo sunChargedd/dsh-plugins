@@ -242,6 +242,12 @@ window.__ModuleLoader__.load({
       'drawer.details.passwordCopied': ['密码已复制', 'Password copied'],
       'drawer.details.revealWarning': ['密码已明文显示；注意旁人、录屏和截图，30 秒后自动隐藏。', 'The password is visible in plain text; watch for onlookers, screen recording and screenshots. It hides after 30 seconds.'],
       'drawer.details.revealFailed': ['无法显示密码：{message}', 'Could not reveal the password: {message}'],
+      'drawer.snippets.title': ['快捷命令', 'Quick commands'],
+      'drawer.snippets.hint': ['保存这台主机常用的只读/运维命令，一键执行并查看输出。', 'Save common commands for this host, run one click and inspect the output.'],
+      'drawer.snippets.name': ['命令名称', 'Command name'],
+      'drawer.snippets.command': ['命令内容', 'Command'],
+      'drawer.snippets.add': ['保存', 'Save'],
+      'drawer.snippets.run': ['执行快捷命令', 'Run quick command'],
       'drawer.tunnels.title': ['端口转发', 'Port forwarding'],
       'drawer.tunnels.count': ['{count} 个活动隧道', '{count} active'],
       'drawer.tunnels.hint': ['本地监听 127.0.0.1，转发到目标机再访问的远程地址；本地端口留空自动分配。', 'Listens on 127.0.0.1 locally and forwards through the SSH host to the remote address. Leave the local port empty for an automatic port.'],
@@ -4765,6 +4771,10 @@ window.__ModuleLoader__.load({
       const [remoteHost, setRemoteHost] = React.useState('127.0.0.1')
       const [remotePort, setRemotePort] = React.useState('')
       const [startingTunnel, setStartingTunnel] = React.useState(false)
+      const [snippetName, setSnippetName] = React.useState('')
+      const [snippetCommand, setSnippetCommand] = React.useState('')
+      const [snippetOutput, setSnippetOutput] = React.useState(null)
+      const [runningSnippet, setRunningSnippet] = React.useState('')
       const [revealedPassword, setRevealedPassword] = React.useState('')
       const [revealing, setRevealing] = React.useState(false)
       const revealTimer = React.useRef(null)
@@ -4830,6 +4840,27 @@ window.__ModuleLoader__.load({
       }
 
       const activeTunnels = (model.snapshot?.tunnels ?? []).filter((tunnel) => tunnel.host === host.host)
+      const snippets = (model.snapshot?.snippets ?? []).filter((snippet) => !snippet.host || snippet.host === host.host)
+
+      async function saveSnippet() {
+        if (!snippetName.trim() || !snippetCommand.trim()) return
+        try {
+          await callAction('snippet/save', { snippet: { name: snippetName.trim(), command: snippetCommand.trim(), host: host.host } })
+          setSnippetName('')
+          setSnippetCommand('')
+          await model.load({ quiet: true })
+        } catch (failure) { notify(t('state.error', { message: errorMessage(failure) }), 'error') }
+      }
+
+      async function runSnippet(snippet) {
+        if (runningSnippet) return
+        setRunningSnippet(snippet.id)
+        try {
+          const value = await callAction('snippet/run', { id: snippet.id, host: host.host })
+          setSnippetOutput({ name: snippet.name, text: [value.stdout, value.stderr].filter(Boolean).join('\n') || `exit ${value.code}`, code: value.code })
+        } catch (failure) { notify(t('state.error', { message: errorMessage(failure) }), 'error') }
+        finally { setRunningSnippet('') }
+      }
 
       async function startForward() {
         if (startingTunnel) return
@@ -4962,10 +4993,42 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'ssh-sectionHead' },
+            h('h3', { className: 'ssh-sectionTitle' }, t('drawer.snippets.title')),
+            h(Badge, { tone: snippets.length ? 'ok' : 'muted' }, String(snippets.length)),
+          ),
+          h('p', { className: 'ssh-sectionHint' }, t('drawer.snippets.hint')),
+          snippets.length
+            ? h('div', { className: 'ssh-snippetList' }, snippets.map((snippet) =>
+                h('div', { key: snippet.id, className: 'ssh-snippetRow' },
+                  h('span', { className: 'ssh-snippetName', title: snippet.command }, snippet.name),
+                  h('code', { className: 'ssh-snippetCommand' }, snippet.command),
+                  h(IconButton, { title: t('drawer.snippets.run'), onClick: () => void runSnippet(snippet), disabled: Boolean(runningSnippet) },
+                    runningSnippet === snippet.id ? h(Spinner, { size: 12 }) : h(IconPlay, { size: 13 })),
+                  h(IconButton, { title: t('common.delete'), onClick: async () => { try { await callAction('snippet/delete', { id: snippet.id }); await model.load({ quiet: true }) } catch (failure) { notify(t('state.error', { message: errorMessage(failure) }), 'error') } } }, h(IconTrash, { size: 13 })),
+                ),
+              ))
+            : null,
+          h('div', { className: 'ssh-snippetForm' },
+            h(TextInput, { value: snippetName, onChange: setSnippetName, placeholder: t('drawer.snippets.name') }),
+            h(TextInput, { value: snippetCommand, onChange: setSnippetCommand, placeholder: t('drawer.snippets.command'), mono: true }),
+            h(Button, { size: 'sm', variant: 'ghost', onClick: () => void saveSnippet(), disabled: !snippetName.trim() || !snippetCommand.trim() }, h(IconPlus, { size: 12 }), t('drawer.snippets.add')),
+          ),
+          snippetOutput
+            ? h('div', { className: 'ssh-snippetOutput' },
+                h('div', { className: 'ssh-snippetOutputHead' }, h('span', null, snippetOutput.name), h(IconButton, { title: t('common.close'), onClick: () => setSnippetOutput(null) }, h(IconClose, { size: 12 }))),
+                h('pre', null, snippetOutput.text),
+              )
+            : null,
+        ),
+        h(
+          'section',
+          { className: 'ssh-section' },
+          h(
+            'div',
+            { className: 'ssh-sectionHead' },
             h('h3', { className: 'ssh-sectionTitle' }, t('drawer.tunnels.title')),
             h(Badge, { tone: activeTunnels.length ? 'ok' : 'muted' }, t('drawer.tunnels.count', { count: activeTunnels.length })),
           ),
-          h('p', { className: 'ssh-sectionHint' }, t('drawer.tunnels.hint')),
           h(
             'div',
             { className: 'ssh-tunnelTypes', role: 'tablist' },
@@ -6499,6 +6562,16 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-kvValue.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .ssh-sectionHint{font-size:11.5px;color:var(--ssh-text-3);line-height:1.65}
 .ssh-tunnelTypes{display:flex;gap:4px;margin-bottom:8px}
+.ssh-snippetList{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.ssh-snippetRow{display:grid;grid-template-columns:110px minmax(0,1fr) 26px 26px;align-items:center;gap:6px;padding:4px 6px;border:.5px solid var(--ssh-border);border-radius:6px;font-size:11.5px}
+.ssh-snippetName{font-weight:500;overflow:hidden;text-overflow:ellipsis}
+.ssh-snippetCommand{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10.5px;color:var(--ssh-text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ssh-snippetForm{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ssh-snippetForm .ssh-input{width:150px}
+.ssh-snippetForm .ssh-input:nth-of-type(2){flex:1;min-width:180px}
+.ssh-snippetOutput{margin-top:8px;border:.5px solid var(--ssh-border);border-radius:6px;overflow:hidden}
+.ssh-snippetOutputHead{display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:var(--ssh-layer-2);font-size:11px}
+.ssh-snippetOutput pre{margin:0;padding:8px;max-height:220px;overflow:auto;font-size:11px;line-height:1.45;white-space:pre-wrap;background:var(--ssh-bg)}
 .ssh-remoteEditor{width:min(760px,100%)}
 .ssh-remoteEditor .ssh-textarea{min-height:340px;max-height:58vh;font-size:12px;line-height:1.5}
 .ssh-transferList{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}

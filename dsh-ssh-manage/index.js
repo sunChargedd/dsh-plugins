@@ -9,6 +9,7 @@ import { batchExec, connect, deleteRemotePath, downloadFile, execCommand, inspec
 import { storagePaths } from './lib/storage.js'
 import { appendAudit, readAudit } from './lib/audit.js'
 import { loadAgentSettings, saveAgentSettings } from './lib/agent-settings.js'
+import { deleteSnippet, loadSnippets, saveSnippets, upsertSnippet } from './lib/snippets.js'
 import { createExport, importExport } from './lib/transfer.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
 
@@ -346,6 +347,7 @@ async function state(paths) {
     agentAvailable: Boolean(process.env.SSH_AUTH_SOCK),
     agentSettings: await loadAgentSettings(paths).catch(() => ({ approval: 'audit', readonly: false })),
     audit: await readAudit(paths, 20).catch(() => []),
+    snippets: await loadSnippets(paths).catch(() => []),
     tunnels: tunnelList(),
     hosts: current.hosts.map((host) => ({ ...host, ...(entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
     warnings,
@@ -485,6 +487,23 @@ export async function runAction(paths, action, params = {}) {
     }
     case 'audit/list':
       return { entries: await readAudit(paths, params.limit), agentSettings: await loadAgentSettings(paths) }
+    case 'snippet/save': {
+      const snippets = await upsertSnippet(paths, params.snippet ?? params)
+      return { snippets, state: await state(paths) }
+    }
+    case 'snippet/delete': {
+      const snippets = await deleteSnippet(paths, requireString(params, 'id'))
+      return { snippets, state: await state(paths) }
+    }
+    case 'snippet/run': {
+      const snippets = await loadSnippets(paths)
+      const snippet = snippets.find((item) => item.id === params.id)
+      if (!snippet) throw new Error('Snippet was not found')
+      const host = await findHost(paths, params.host || snippet.host)
+      const result = await execCommand(host, await passwordForHost(paths, host), snippet.command)
+      await appendAudit(paths, { action: 'snippet:run', host: host.host, detail: snippet.command, ok: result.code === 0, error: result.stderr }).catch(() => {})
+      return { ...result, snippet: snippet.name, host: host.host }
+    }
     case 'tunnel/list':
       return { tunnels: tunnelList() }
     case 'tunnel/start':

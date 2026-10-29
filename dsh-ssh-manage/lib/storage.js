@@ -16,6 +16,7 @@ export function storagePaths(paths = {}) {
     metadataPath: paths.metadataPath || path.join(stateDir, 'hosts.json'),
     agentSettingsPath: paths.agentSettingsPath || path.join(stateDir, 'agent-settings.json'),
     auditPath: paths.auditPath || path.join(stateDir, 'audit.jsonl'),
+    snippetsPath: paths.snippetsPath || path.join(stateDir, 'snippets.json'),
   }
 }
 
