@@ -134,6 +134,9 @@ window.__ModuleLoader__.load({
       'editor.port': ['端口', 'Port'],
       'editor.group': ['分组', 'Group'],
       'editor.groupPlaceholder': ['例如 production', 'e.g. production'],
+      'editor.groupChoose': ['选择已有分组', 'Choose an existing group'],
+      'editor.groupNone': ['无分组', 'No group'],
+      'editor.groupNoOptions': ['还没有已有分组，直接输入新名称即可。', 'No groups yet; type a new name.'],
       'editor.tags': ['标签', 'Tags'],
       'editor.tagsPlaceholder': ['web, critical（逗号分隔）', 'web, critical (comma separated)'],
       'editor.label': ['显示名称', 'Display name'],
@@ -4590,6 +4593,9 @@ window.__ModuleLoader__.load({
       const [password, setPassword] = React.useState('')
       const [passwordError, setPasswordError] = React.useState('')
       const [formError, setFormError] = React.useState('')
+      const [groupMenuOpen, setGroupMenuOpen] = React.useState(false)
+      const groupMenuRef = React.useRef(null)
+      const groupOptions = (model.allGroups ?? []).filter((group) => group.key !== '').map((group) => group.key)
       const busy = isPending('editor')
       const passwordRequired = !original || original.passwordConfigured !== true
 
@@ -4618,6 +4624,27 @@ window.__ModuleLoader__.load({
           if (model.editorCloseGuard.current === guard) model.editorCloseGuard.current = null
         }
       })
+
+      React.useEffect(() => {
+        if (!groupMenuOpen) return undefined
+        const close = (event) => {
+          if (groupMenuRef.current && groupMenuRef.current.contains(event.target)) return
+          setGroupMenuOpen(false)
+        }
+        const onKey = (event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
+            setGroupMenuOpen(false)
+          }
+        }
+        document.addEventListener('mousedown', close)
+        document.addEventListener('keydown', onKey, true)
+        return () => {
+          document.removeEventListener('mousedown', close)
+          document.removeEventListener('keydown', onKey, true)
+        }
+      }, [groupMenuOpen])
 
       async function submit() {
         const alias = draft.host.trim()
@@ -4745,11 +4772,59 @@ window.__ModuleLoader__.load({
             h(
               Field,
               { label: t('editor.group') },
-              h(TextInput, {
-                value: draft.group,
-                onChange: (value) => update('group', value),
-                placeholder: t('editor.groupPlaceholder'),
-              }),
+              h(
+                'div',
+                { className: 'ssh-groupCombo', ref: groupMenuRef },
+                h(TextInput, {
+                  value: draft.group,
+                  onChange: (value) => update('group', value),
+                  placeholder: t('editor.groupPlaceholder'),
+                }),
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'ssh-groupToggle',
+                    title: t('editor.groupChoose'),
+                    'aria-label': t('editor.groupChoose'),
+                    'aria-haspopup': 'listbox',
+                    'aria-expanded': groupMenuOpen,
+                    onClick: () => setGroupMenuOpen((value) => !value),
+                  },
+                  h(IconChevronDown, { size: 13 }),
+                ),
+                groupMenuOpen
+                  ? h(
+                      'div',
+                      { className: 'ssh-groupMenu', role: 'listbox' },
+                      h('button', {
+                        type: 'button',
+                        role: 'option',
+                        'aria-selected': draft.group.trim() === '',
+                        className: cx('ssh-groupOption', draft.group.trim() === '' && 'active'),
+                        onClick: () => {
+                          update('group', '')
+                          setGroupMenuOpen(false)
+                        },
+                      }, t('editor.groupNone')),
+                      groupOptions.length === 0
+                        ? h('div', { className: 'ssh-groupEmpty' }, t('editor.groupNoOptions'))
+                        : groupOptions.map((option) =>
+                            h('button', {
+                              key: option,
+                              type: 'button',
+                              role: 'option',
+                              'aria-selected': draft.group.trim() === option,
+                              className: cx('ssh-groupOption', draft.group.trim() === option && 'active'),
+                              onClick: () => {
+                                update('group', option)
+                                setGroupMenuOpen(false)
+                              },
+                            }, option),
+                          ),
+                    )
+                  : null,
+              ),
             ),
             h(
               Field,
@@ -5298,7 +5373,7 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-mainTop{flex:0 0 auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px;row-gap:6px;padding:10px 14px;border-bottom:.5px solid var(--ssh-border);min-height:56px}
 .ssh-context{display:flex;align-items:baseline;gap:6px;min-width:0;max-width:180px;flex:0 0 auto}
 .ssh-contextName{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ssh-contextCount{font-size:11px;color:var(--ssh-text-3);font-variant-numeric:tabular-nums}
+.ssh-contextCount{font-size:11px;color:var(--ssh-text-2);font-variant-numeric:tabular-nums}
 .ssh-search{position:relative;display:flex;align-items:center;flex:0 1 300px;min-width:120px}
 .ssh-search > svg{position:absolute;left:10px;color:var(--ssh-dim);pointer-events:none;z-index:1}
 .ssh-search .ssh-input{height:30px;padding-left:31px;border-radius:999px;background:var(--ssh-layer-1);font-size:12px}
@@ -5312,7 +5387,7 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-table{flex:1;min-height:0;display:flex;flex-direction:column;min-width:0}
 .ssh-tableScroll{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
 .ssh-grid{display:grid;align-items:center;column-gap:8px;padding:0 12px;width:100%;min-width:0}
-.ssh-head{flex:0 0 auto;height:38px;border-bottom:.5px solid var(--ssh-border);color:var(--ssh-text-3);font-size:11px;font-weight:500;background:var(--ssh-bg);position:sticky;top:0;z-index:3;min-width:640px}
+.ssh-head{flex:0 0 auto;height:38px;border-bottom:.5px solid var(--ssh-border);color:var(--ssh-text-2);font-size:11px;font-weight:500;background:var(--ssh-bg);position:sticky;top:0;z-index:3;min-width:640px}
 .ssh-cell{min-width:0;display:flex;align-items:center;gap:6px;overflow:hidden}
 .ssh-headBtn{appearance:none;display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:inherit;font:inherit;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;min-width:0}
 .ssh-headBtn:hover{color:var(--ssh-text)}
@@ -5330,32 +5405,32 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-colLatency{min-width:0}
 .ssh-colSystem{min-width:0}
 .ssh-osBadge{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:8px;background:var(--ssh-layer-3);color:var(--ssh-brand)}
-.ssh-osBadge.muted{color:var(--ssh-dim)}
+.ssh-osBadge.muted{color:var(--ssh-text-2)}
 .ssh-osName{font-size:11.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ssh-osName.muted{color:var(--ssh-dim)}
+.ssh-osName.muted{color:var(--ssh-text-2)}
 .ssh-latency{appearance:none;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--ssh-text-2);font:inherit;font-size:11.5px;white-space:nowrap;cursor:pointer}
-.ssh-latency.ok{color:var(--dsw-alias-state-success-label,var(--ssh-text-2))}
-.ssh-latency.muted{color:var(--ssh-dim)}
+.ssh-latency.ok{color:var(--ssh-success)}
+.ssh-latency.muted{color:var(--ssh-text-2)}
 .ssh-latency:hover:not(:disabled){color:var(--ssh-text)}
 .ssh-latency:disabled{cursor:default}
 .ssh-latencyDot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.55}
 .ssh-latencyIcon{display:inline-flex;color:var(--dsw-alias-state-success-label,var(--ssh-success))}
 .ssh-colName{flex-direction:column;align-items:flex-start;gap:0}
 .ssh-nameMain{display:flex;align-items:center;gap:5px;max-width:100%;font-size:12.5px;font-weight:500;color:var(--ssh-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ssh-nameSub{max-width:100%;font-size:10.5px;color:var(--ssh-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssh-nameSub{max-width:100%;font-size:10.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ssh-favMark{color:var(--ssh-warn);display:inline-flex;flex:0 0 auto}
 .ssh-colAddress{gap:3px;min-width:0}
-.ssh-address{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.ssh-address{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;color:var(--ssh-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .ssh-inlineActions{display:inline-flex;gap:1px;flex:0 0 auto;opacity:.45;transition:opacity .12s ease}
 .ssh-row:hover .ssh-inlineActions{opacity:1}
 .ssh-miniBtn{appearance:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--ssh-text-3);cursor:pointer}
 .ssh-miniBtn:hover{background:var(--ssh-hover);color:var(--ssh-text)}
 .ssh-colInfo{gap:4px;row-gap:3px;flex-wrap:wrap;align-content:center;overflow:visible}
 .ssh-chip{display:inline-flex;flex:0 0 auto;align-items:center;height:21px;max-width:100%;padding:0 7px;border-radius:6px;border:.5px solid var(--ssh-border);background:var(--ssh-layer-3);font-size:10.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ssh-mutedText{font-size:11.5px;color:var(--ssh-dim)}
+.ssh-mutedText{font-size:11.5px;color:var(--ssh-text-2)}
 .ssh-colNotes{min-width:0}
 .ssh-noteText{font-size:11.5px;color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ssh-noteText.muted{color:var(--ssh-dim)}
+.ssh-noteText.muted{color:var(--ssh-text-2)}
 .ssh-colActions{gap:4px;justify-content:flex-start;overflow:visible}
 .ssh-colGear{justify-content:flex-end}
 .ssh-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:56px 24px;text-align:center;color:var(--ssh-text-3);font-size:12px;min-height:0}
@@ -5391,6 +5466,14 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-input.mono,.ssh-textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
 .ssh-textarea{height:auto;padding:9px 11px;line-height:1.65;resize:vertical;min-height:74px}
 .ssh-field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ssh-groupCombo{position:relative;display:flex;align-items:center;gap:4px}
+.ssh-groupCombo .ssh-input{flex:1;min-width:0}
+.ssh-groupToggle{appearance:none;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;border:.5px solid var(--ssh-border-strong);border-radius:var(--ssh-radius-sm);background:var(--ssh-layer-2);color:var(--ssh-text-2);cursor:pointer;flex:0 0 auto}
+.ssh-groupToggle:hover{background:var(--ssh-hover);color:var(--ssh-text)}
+.ssh-groupMenu{position:absolute;z-index:12;top:calc(100% + 5px);left:0;right:0;max-height:190px;overflow:auto;padding:4px;border:.5px solid var(--ssh-border-strong);border-radius:var(--ssh-radius-md);background:var(--ssh-layer-1);box-shadow:var(--ssh-shadow)}
+.ssh-groupOption{appearance:none;display:block;width:100%;padding:6px 8px;border:0;border-radius:6px;background:transparent;color:var(--ssh-text);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.ssh-groupOption:hover,.ssh-groupOption.active{background:var(--ssh-hover)}
+.ssh-groupEmpty{padding:6px 8px;font-size:11.5px;color:var(--ssh-text-2)}
 .ssh-field.wide{grid-column:1/-1}
 .ssh-label{font-size:11.5px;font-weight:500;color:var(--ssh-text-2)}
 .ssh-hint{font-size:10.5px;color:var(--ssh-text-3);line-height:1.55}
