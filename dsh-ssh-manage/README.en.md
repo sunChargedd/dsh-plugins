@@ -98,16 +98,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.13`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.14`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.13
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.14
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.13
+dsh plugin add dsh-ssh-manage@0.3.14
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -219,7 +219,8 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xt
 
 - **Host key verification** uses `known_hosts`; hosts with no matching entry are refused with a fingerprint and path hint. A first connection can be trusted from the terminal error screen after a second confirmation; changed keys require manual removal of the old entry. Custom `UserKnownHostsFile`/SSH CA setups still need manual handling.
 - **Session lifetime**: sessions are kept on the Host; switching to another DSH session, temporarily leaving the panel, or refreshing the page re-attaches to the existing shell and replays roughly the last 256 KB of output. The browser sends a `/pty/touch` heartbeat every 60s while the page is open; a session with no output, input or heartbeat for 30 minutes is reaped (max 16 sessions).
-- **Authentication**: saved passwords, `IdentityFile` private keys and `SSH_AUTH_SOCK` ssh-agent are supported; `~` is expanded in key paths. Passphrase-protected keys do not prompt for a passphrase yet — load them into ssh-agent. ProxyJump transport is still unsupported and fails with a clear error.
+- **Authentication**: saved passwords, `IdentityFile` private keys and `SSH_AUTH_SOCK` ssh-agent are supported; `~` is expanded in key paths. Passphrase-protected keys do not prompt for a passphrase yet — load them into ssh-agent.
+- **ProxyJump**: single-hop is supported using an existing host alias (reusing its password/key) or `user@host:port` (key/agent only); multi-hop is not supported yet. The jump host key must already be present in known_hosts.
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.

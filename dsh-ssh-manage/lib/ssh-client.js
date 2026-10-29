@@ -47,7 +47,7 @@ function loadPrivateKey(host) {
   }
 }
 
-function connectionConfig(host, password, verifyState = {}) {
+function connectionConfig(host, password, verifyState = {}, extra = {}) {
   const label = host.host || host.hostname || ''
   const privateKey = loadPrivateKey(host)
   const agent = process.env.SSH_AUTH_SOCK || undefined
@@ -87,14 +87,17 @@ function connectionConfig(host, password, verifyState = {}) {
       )
       return false
     },
+    ...extra,
   }
-  if (host.proxyJump) throw new Error('ProxyJump is not supported by the plugin transport yet')
   return config
 }
 
-function connect(host, password, timeout = DEFAULT_TIMEOUT) {
-  const agent = process.env.SSH_AUTH_SOCK
-  if ((typeof password !== 'string' || password.length === 0) && !loadPrivateKey(host) && !agent) {
+function hasAuth(host, password) {
+  return (typeof password === 'string' && password.length > 0) || Boolean(loadPrivateKey(host)) || Boolean(process.env.SSH_AUTH_SOCK)
+}
+
+function openClient(host, password, timeout = DEFAULT_TIMEOUT, extra = {}) {
+  if (!hasAuth(host, password)) {
     return Promise.reject(new Error('Password or SSH key/ssh-agent authentication is required'))
   }
   return new Promise((resolve, reject) => {
@@ -129,8 +132,48 @@ function connect(host, password, timeout = DEFAULT_TIMEOUT) {
         finish(prompts.map(() => password))
       })
     }
-    try { client.connect(connectionConfig(host, password, verifyState)) } catch (error) { fail(error) }
+    try { client.connect(connectionConfig(host, password, verifyState, extra)) } catch (error) { fail(error) }
   })
+}
+
+async function connectThroughJump(host, password, timeout) {
+  const jump = host.jumpHost
+  if (!jump || !jump.host) throw new Error('ProxyJump is not configured correctly')
+  if (jump.jumpHost) throw new Error('Chained ProxyJump is not supported yet')
+  let jumpClient
+  try {
+    jumpClient = await openClient(jump.host, jump.password ?? '', timeout)
+  } catch (error) {
+    throw new Error(`ProxyJump "${jump.host.host || jump.host.hostname}" failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  let stream
+  try {
+    stream = await new Promise((resolve, reject) => {
+      jumpClient.forwardOut('127.0.0.1', 0, host.hostname || host.host, Number(host.port || 22), (error, value) => {
+        if (error) reject(error)
+        else resolve(value)
+      })
+    })
+  } catch (error) {
+    jumpClient.end()
+    throw new Error(`ProxyJump forward to ${host.hostname || host.host}:${host.port || 22} failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  try {
+    const client = await openClient(host, password, timeout, { sock: stream })
+    client.once('close', () => {
+      try { jumpClient.end() } catch {}
+    })
+    return client
+  } catch (error) {
+    try { stream.end() } catch {}
+    jumpClient.end()
+    throw error
+  }
+}
+
+function connect(host, password, timeout = DEFAULT_TIMEOUT) {
+  if (host.jumpHost) return connectThroughJump(host, password, timeout)
+  return openClient(host, password, timeout)
 }
 
 /**

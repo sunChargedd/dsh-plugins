@@ -155,6 +155,8 @@ window.__ModuleLoader__.load({
       'editor.passwordRequiredHint': ['密码使用 AES-256-GCM 加密保存在插件自己的目录，不会写入 ~/.ssh/config。', 'Encrypted with AES-256-GCM in the plugin state directory; never written to ~/.ssh/config.'],
       'editor.identityFile': ['私钥文件', 'Identity file'],
       'editor.identityFileHint': ['可选，例如 ~/.ssh/id_ed25519；留空则尝试 ssh-agent 和已保存密码。', 'Optional, e.g. ~/.ssh/id_ed25519; leave empty to try ssh-agent and the saved password.'],
+      'editor.proxyJump': ['跳板机 / ProxyJump', 'ProxyJump'],
+      'editor.proxyJumpHint': ['可选，填已有主机别名（凭据用该主机的保存密码）或 user@host:port；暂不支持多跳。', 'Optional: an existing host alias (uses that host’s saved credentials) or user@host:port. Multi-hop is not supported yet.'],
       'editor.passwordAuthOptional': ['密码（可选，仅作为密钥/agent 失败时的备用）', 'Password (optional; fallback when key/agent auth fails)'],
       'editor.passwordExisting': ['已保存密码，填写新密码可替换；留空则保持不变。', 'A password is stored; type a new one to replace it, or leave blank.'],
       'editor.required': ['请填写别名和服务器地址。', 'Alias and hostname are required.'],
@@ -4057,7 +4059,7 @@ window.__ModuleLoader__.load({
       }, [sessionId, retryToken])
 
       const retry = () => setRetryToken((value) => value + 1)
-      const hostKeyError = status === 'error' && /host key is not in known_hosts/i.test(message)
+      const hostKeyError = status === 'error' && message.includes(`Host key verification failed for "${host.host}"`) && /host key is not in known_hosts/i.test(message)
       const trustHostKey = async () => {
         if (trustingHostKey) return
         let confirmed = true
@@ -4632,6 +4634,7 @@ window.__ModuleLoader__.load({
             h(KV, { label: t('drawer.details.address'), value: host.hostname || '—', mono: true }),
             h(KV, { label: t('drawer.details.user'), value: host.user || '—', mono: true }),
             h(KV, { label: t('drawer.details.port'), value: host.port || '22', mono: true }),
+            host.proxyJump ? h(KV, { label: t('editor.proxyJump'), value: host.proxyJump, mono: true }) : null,
           ),
         ),
         h(
@@ -5003,6 +5006,16 @@ window.__ModuleLoader__.load({
                 value: draft.identityFile,
                 onChange: (value) => update('identityFile', value),
                 placeholder: '~/.ssh/id_ed25519',
+                mono: true,
+              }),
+            ),
+            h(
+              Field,
+              { label: t('editor.proxyJump'), hint: t('editor.proxyJumpHint') },
+              h(TextInput, {
+                value: draft.proxyJump,
+                onChange: (value) => update('proxyJump', value),
+                placeholder: 'bastion 或 user@host:port',
                 mono: true,
               }),
             ),

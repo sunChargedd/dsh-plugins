@@ -146,12 +146,69 @@ function requireString(params, key) {
   return params[key].trim()
 }
 
+function parseProxyJump(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw || raw.toLowerCase() === 'none') return null
+  if (raw.includes(',')) throw new Error('Chained ProxyJump is not supported yet')
+  let user = ''
+  let target = raw
+  const at = target.lastIndexOf('@')
+  if (at >= 0) {
+    user = target.slice(0, at)
+    target = target.slice(at + 1)
+  }
+  let hostname = target
+  let port = '22'
+  if (target.startsWith('[')) {
+    const end = target.indexOf(']')
+    if (end < 0) throw new Error('Invalid ProxyJump host')
+    hostname = target.slice(1, end)
+    if (target.slice(end + 1).startsWith(':')) port = target.slice(end + 2)
+  } else {
+    const colon = target.lastIndexOf(':')
+    if (colon > 0) {
+      hostname = target.slice(0, colon)
+      port = target.slice(colon + 1)
+    }
+  }
+  if (!hostname || !/^\d{1,5}$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error('Invalid ProxyJump target')
+  }
+  return { user, hostname, port }
+}
+
+async function resolveJumpHost(paths, host) {
+  if (!host.proxyJump) return host
+  const raw = String(host.proxyJump).trim()
+  if (!raw || raw.toLowerCase() === 'none') return host
+  if (raw.includes(',')) throw new Error('Chained ProxyJump is not supported yet')
+  const current = await listSshHosts(paths)
+  const aliasHost = current.hosts.find((entry) => entry.host === raw)
+  if (aliasHost) {
+    if (aliasHost.proxyJump) throw new Error('Chained ProxyJump is not supported yet')
+    return {
+      ...host,
+      jumpHost: { host: aliasHost, password: (await getPassword(paths, aliasHost.host)) ?? '' },
+    }
+  }
+  const parsed = parseProxyJump(raw)
+  const jump = {
+    host: raw,
+    hostname: parsed.hostname,
+    user: parsed.user || undefined,
+    port: parsed.port,
+    identityFile: '',
+    proxyJump: '',
+  }
+  return { ...host, jumpHost: { host: jump, password: '' } }
+}
+
 async function findHost(paths, alias) {
   const name = requireString({ host: alias }, 'host')
   const current = await listSshHosts(paths)
   const host = current.hosts.find((entry) => entry.host === name)
   if (!host) throw new Error(`SSH host "${name}" was not found`)
-  return host
+  return resolveJumpHost(paths, host)
 }
 
 async function passwordForHost(paths, host) {
@@ -872,7 +929,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 

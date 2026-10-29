@@ -509,6 +509,25 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   assert.equal(merged.updated, 1)
   console.log('ok - encrypted export/import round-trips hosts, metadata and passwords')
 
+  assert.deepEqual(indexTest.parseProxyJump('bastion'), { user: '', hostname: 'bastion', port: '22' })
+  assert.deepEqual(indexTest.parseProxyJump('ops@jump.example.com:2200'), { user: 'ops', hostname: 'jump.example.com', port: '2200' })
+  assert.deepEqual(indexTest.parseProxyJump('[::1]:2200'), { user: '', hostname: '::1', port: '2200' })
+  assert.equal(indexTest.parseProxyJump('none'), null)
+  assert.throws(() => indexTest.parseProxyJump('a,b'), /Chained ProxyJump/)
+  const jumpPaths = {
+    configPath: path.join(temp, '.jump', 'config'),
+    stateDir: path.join(temp, '.jump', 'state'),
+    backupDir: path.join(temp, '.jump', 'backups'),
+  }
+  await mkdir(path.dirname(jumpPaths.configPath), { recursive: true })
+  await writeFile(jumpPaths.configPath, 'Host bastion\n  HostName 192.0.2.10\n  User ops\n  Port 2222\n\nHost target\n  HostName 10.0.0.5\n  ProxyJump bastion\n', 'utf8')
+  await setPassword(jumpPaths, 'bastion', 'jump-secret')
+  const targetHost = (await listSshHosts(jumpPaths)).hosts.find((entry) => entry.host === 'target')
+  const resolvedTarget = await indexTest.resolveJumpHost(jumpPaths, targetHost)
+  assert.equal(resolvedTarget.jumpHost.host.host, 'bastion')
+  assert.equal(resolvedTarget.jumpHost.host.hostname, '192.0.2.10')
+  assert.equal(resolvedTarget.jumpHost.password, 'jump-secret')
+  console.log('ok - ProxyJump parser/resolver resolves aliases and credentials')
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))
