@@ -78,6 +78,54 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
+let sshHostCatalogText = ''
+let sshHostCatalogRefresh = null
+
+function sshCatalogLine(host, metadata, passwordSet) {
+  const user = host.user ? `${host.user}@` : ''
+  const address = `${host.hostname || host.host}${host.port ? `:${host.port}` : ''}`
+  const group = String(metadata?.group || '').replace(/[\r\n]+/g, ' ').trim() || 'ungrouped'
+  const label = String(metadata?.label || '').replace(/[\r\n]+/g, ' ').trim()
+  const tags = Array.isArray(metadata?.tags) ? metadata.tags.map((tag) => String(tag).replace(/[\r\n]+/g, ' ')).filter(Boolean) : []
+  const parts = [
+    `alias=${host.host}`,
+    `target=${user}${address}`,
+    `group=${group}`,
+  ]
+  if (label && label !== host.host) parts.push(`display=${label}`)
+  if (tags.length) parts.push(`tags=${tags.slice(0, 4).join(',')}`)
+  parts.push(`password=${passwordSet.has(host.host) ? 'stored' : 'missing'}`)
+  return `- ${parts.join(' | ')}`
+}
+
+/** Refresh the host catalog injected into the DSH system prompt. */
+export async function refreshSshHostCatalog(paths) {
+  if (sshHostCatalogRefresh) return sshHostCatalogRefresh
+  sshHostCatalogRefresh = (async () => {
+    try {
+      const [{ hosts }, metadata, passwords] = await Promise.all([
+        listSshHosts(paths),
+        loadMetadata(paths).catch(() => ({ entries: {} })),
+        listPasswordAliases(paths).catch(() => []),
+      ])
+      const passwordSet = new Set(passwords)
+      const lines = hosts.slice(0, 40).map((host) => sshCatalogLine(host, metadata.entries[host.host], passwordSet))
+      if (hosts.length > 40) lines.push(`- ... ${hosts.length - 40} more hosts; call list_hosts for the full list`)
+      sshHostCatalogText = [
+        'SSH hosts managed by the dsh-ssh-manage plugin. When the user asks to inspect, run commands on, upload to or download from one of these servers, call the ssh_manager tool directly with the exact alias.',
+        'Use action=exec with {host, command} for one command, batch_exec with {hosts, command} for several, and sftp_* actions for files. Use test_connection or inspect_host for status and system facts. list_hosts returns the full catalog.',
+        'Passwords are never returned by the plugin; never ask the user to paste a password into the conversation.',
+        lines.length ? lines.join('\n') : '- No SSH hosts are configured yet; the user can add them in the dsh-ssh-manage sidebar panel.',
+      ].join('\n').slice(0, 6000)
+    } catch {
+      sshHostCatalogText = 'SSH host catalog is temporarily unavailable; call ssh_manager action=list_hosts to read it.'
+    } finally {
+      sshHostCatalogRefresh = null
+    }
+  })()
+  return sshHostCatalogRefresh
+}
+
 async function state(paths) {
   const [current, metadataResult, passwordsResult] = await Promise.all([
     listSshHosts(paths),
@@ -93,6 +141,7 @@ async function state(paths) {
   else passwords = passwordsResult.value
   const passwordSet = new Set(passwords)
   const stateDir = storagePaths(paths).stateDir
+  void refreshSshHostCatalog(paths)
   return {
     ...current,
     stateDir,
@@ -253,7 +302,7 @@ export async function runAction(paths, action, params = {}) {
 function managerTool(paths) {
   return {
     name: 'ssh_manager',
-    description: 'Manage SSH hosts, encrypted local passwords, remote commands and SFTP operations. Passwords are never returned.',
+    description: 'Manage SSH hosts, encrypted local passwords, remote commands and SFTP operations. Hosts entered in the dsh-ssh-manage panel are listed in the system prompt; when the user asks to operate on a server, call this tool directly with its alias. Use action=exec for one command, batch_exec for several hosts, sftp_* for files. Passwords are never returned.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -262,7 +311,7 @@ function managerTool(paths) {
         action: { type: 'string', enum: ACTIONS, description: 'The operation to run.' },
         host: {
           oneOf: [{ type: 'string' }, { type: 'object' }],
-          description: 'Host alias as a string for every action except save_host, which takes a host object: { host, hostname, user, port, identityFile, proxyJump, forwardAgent }.',
+          description: 'Host alias as a string (see the SSH host catalog in the system prompt) for every action except save_host, which takes a host object: { host, hostname, user, port, identityFile, proxyJump, forwardAgent }.',
         },
         originalHost: { type: 'string', description: 'Existing alias when renaming a host.' },
         password: { type: 'string', description: 'Password to save for a host. It is write-only.' },
@@ -830,7 +879,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
@@ -839,7 +888,12 @@ export function apply(ctx) {
     throw new Error('dsh-ssh-manage requires DeepSeek Harness >=0.2.1-rc.3: ctx.webServer.register is unavailable.')
   }
   const paths = resolveSshPaths(process.env)
+  void refreshSshHostCatalog(paths)
   const runtime = createPtyRuntime()
+  const catalogTimer = setInterval(() => {
+    if (runtime.active) void refreshSshHostCatalog(paths)
+  }, 30_000)
+  catalogTimer.unref?.()
   const runtimeIdleTimer = setInterval(() => {
     if (!runtime.active) return
     // Browser heartbeats (/pty/touch) keep attached sessions alive, so a session
@@ -934,6 +988,7 @@ export function apply(ctx) {
       }
       runtime.upgrades.clear()
       clearInterval(runtimeIdleTimer)
+      clearInterval(catalogTimer)
       for (const session of ptySessions) {
         try { session.close() } catch {}
       }
@@ -949,5 +1004,16 @@ export function apply(ctx) {
   )
   ctx.inject(['tools'], (child) => {
     child.effect(() => child.tools.register(managerTool(paths)), 'dsh-ssh-manage: agent tool')
+  })
+  ctx.inject(['systemPrompt'], (child) => {
+    if (!child.systemPrompt || typeof child.systemPrompt.context !== 'function') return
+    child.effect(
+      () => child.systemPrompt.context({
+        name: 'dsh-ssh-manage-hosts',
+        order: 60,
+        text: () => sshHostCatalogText,
+      }),
+      'dsh-ssh-manage: host catalog prompt context',
+    )
   })
 }
