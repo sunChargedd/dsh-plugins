@@ -1,6 +1,15 @@
 import path from 'node:path'
-import { Client } from 'ssh2'
+import { createRequire } from 'node:module'
 import { verifyHostKey } from './known-hosts.js'
+
+// DSH Host bundles/loads plugins in a variety of Node ESM/CJS interop modes.
+// Resolve the CJS ssh2 export explicitly so `Client` is always a constructor.
+const require = createRequire(import.meta.url)
+const ssh2 = require('ssh2')
+const Client = ssh2.Client ?? ssh2.default?.Client
+if (typeof Client !== 'function') {
+  throw new Error('ssh2 is unavailable: Client export is missing from the installed ssh2 module')
+}
 
 const DEFAULT_TIMEOUT = 15_000
 const MAX_OUTPUT_BYTES = 1024 * 1024
