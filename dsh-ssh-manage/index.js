@@ -1,10 +1,11 @@
+import net from 'node:net'
 import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { acceptWebSocket, isWebSocketUpgrade } from './lib/ws.js'
 import { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost } from './lib/ssh-config.js'
 import { deleteMetadata, loadMetadata, updateMetadata } from './lib/metadata.js'
-import { batchExec, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, trustPendingHostKey, uploadFile } from './lib/ssh-client.js'
+import { batchExec, connect, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, trustPendingHostKey, uploadFile } from './lib/ssh-client.js'
 import { storagePaths } from './lib/storage.js'
 import { createExport, importExport } from './lib/transfer.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
@@ -115,6 +116,81 @@ export async function refreshSshHostCatalog(paths) {
   return sshHostCatalogRefresh
 }
 
+const tunnels = new Map()
+let tunnelCounter = 0
+
+function tunnelPort(value, label) {
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`${label} must be between 1 and 65535`)
+  return port
+}
+
+function tunnelList() {
+  return [...tunnels.values()].map((tunnel) => ({
+    id: tunnel.id,
+    host: tunnel.host,
+    localPort: tunnel.localPort,
+    remoteHost: tunnel.remoteHost,
+    remotePort: tunnel.remotePort,
+    createdAt: tunnel.createdAt,
+  }))
+}
+
+async function startTunnel(paths, params) {
+  const host = await findHost(paths, params.host)
+  const remoteHost = requireString(params, 'remoteHost')
+  const remotePort = tunnelPort(params.remotePort, 'Remote port')
+  if (remotePort === 0) throw new Error('Remote port must be between 1 and 65535')
+  const localPort = tunnelPort(params.localPort, 'Local port')
+  const password = await passwordForHost(paths, host)
+  const client = await connect(host, password, 15_000)
+  const server = net.createServer((socket) => {
+    client.forwardOut('127.0.0.1', 0, remoteHost, remotePort, (error, stream) => {
+      if (error) {
+        socket.destroy()
+        return
+      }
+      socket.pipe(stream).pipe(socket)
+      socket.on('error', () => stream.destroy())
+      stream.on('error', () => socket.destroy())
+    })
+  })
+  const id = `tunnel-${Date.now()}-${++tunnelCounter}`
+  const tunnel = { id, host: host.host, localPort, remoteHost, remotePort, createdAt: new Date().toISOString(), client, server }
+  tunnels.set(id, tunnel)
+  const cleanup = () => {
+    if (!tunnels.has(id)) return
+    tunnels.delete(id)
+    try { server.close() } catch {}
+    try { client.end() } catch {}
+  }
+  client.once('close', cleanup)
+  client.once('error', cleanup)
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(localPort, '127.0.0.1', () => {
+        server.removeListener('error', reject)
+        resolve()
+      })
+    })
+  } catch (error) {
+    cleanup()
+    throw error
+  }
+  tunnel.localPort = server.address().port
+  return { tunnel: { ...tunnelList().find((entry) => entry.id === id) } }
+}
+
+function stopTunnel(id) {
+  const tunnel = tunnels.get(id)
+  if (!tunnel) throw new Error(`Tunnel "${id}" was not found`)
+  tunnels.delete(id)
+  try { tunnel.server.close() } catch {}
+  try { tunnel.client.end() } catch {}
+  return { stopped: true, id }
+}
+
 async function state(paths) {
   const [current, metadataResult, passwordsResult] = await Promise.all([
     listSshHosts(paths),
@@ -136,6 +212,7 @@ async function state(paths) {
     stateDir,
     backupDir: paths.backupDir || path.join(stateDir, 'backups'),
     agentAvailable: Boolean(process.env.SSH_AUTH_SOCK),
+    tunnels: tunnelList(),
     hosts: current.hosts.map((host) => ({ ...host, ...(entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
     warnings,
   }
@@ -268,6 +345,12 @@ export async function runAction(paths, action, params = {}) {
       if (!password) throw new Error('No password is stored for this host')
       return { password }
     }
+    case 'tunnel/list':
+      return { tunnels: tunnelList() }
+    case 'tunnel/start':
+      return await startTunnel(paths, params)
+    case 'tunnel/stop':
+      return stopTunnel(requireString(params, 'id'))
     case 'host-key/trust': {
       const host = await findHost(paths, params.host)
       const result = trustPendingHostKey(host.host)
@@ -929,7 +1012,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
@@ -1049,6 +1132,11 @@ export function apply(ctx) {
         try { client.res.end() } catch {}
       }
       ptyEventClients.clear()
+      for (const tunnel of [...tunnels.values()]) {
+        try { tunnel.server.close() } catch {}
+        try { tunnel.client.end() } catch {}
+      }
+      tunnels.clear()
     },
     'dsh-ssh-manage: pty sessions',
   )

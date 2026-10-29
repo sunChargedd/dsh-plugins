@@ -171,7 +171,7 @@ async function connectThroughJump(host, password, timeout) {
   }
 }
 
-function connect(host, password, timeout = DEFAULT_TIMEOUT) {
+export function connect(host, password, timeout = DEFAULT_TIMEOUT) {
   if (host.jumpHost) return connectThroughJump(host, password, timeout)
   return openClient(host, password, timeout)
 }

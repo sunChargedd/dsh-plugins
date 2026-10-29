@@ -26,6 +26,7 @@
 - **DSH Agent integration** — a compact host catalog (alias/group/display name) is injected into the DSH system prompt to keep token use low; full details come from list_hosts on demand, and the Agent uses `ssh_manager` directly for exec, batch commands, inspection and SFTP;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
+- **Local port forwarding** — start `127.0.0.1:local → remote host:port` tunnels from host details, with ProxyJump/key auth, closed automatically when the plugin unloads;
 - **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download, connection tests;
 - **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config`; passwords are not returned to the browser by default, but Show password decrypts one on demand in the current page and auto-hides it after 30 seconds;
 - **Agent tool** — `ssh_manager` exposes the same capabilities to the model.
@@ -98,16 +99,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.14`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.15`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.14
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.15
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.14
+dsh plugin add dsh-ssh-manage@0.3.15
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -221,6 +222,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xt
 - **Session lifetime**: sessions are kept on the Host; switching to another DSH session, temporarily leaving the panel, or refreshing the page re-attaches to the existing shell and replays roughly the last 256 KB of output. The browser sends a `/pty/touch` heartbeat every 60s while the page is open; a session with no output, input or heartbeat for 30 minutes is reaped (max 16 sessions).
 - **Authentication**: saved passwords, `IdentityFile` private keys and `SSH_AUTH_SOCK` ssh-agent are supported; `~` is expanded in key paths. Passphrase-protected keys do not prompt for a passphrase yet — load them into ssh-agent.
 - **ProxyJump**: single-hop is supported using an existing host alias (reusing its password/key) or `user@host:port` (key/agent only); multi-hop is not supported yet. The jump host key must already be present in known_hosts.
+- **Port forwarding**: LocalForward only for now; RemoteForward and SOCKS5 are not implemented. Tunnels live in the current Host process and close when the plugin or DSH exits.
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.

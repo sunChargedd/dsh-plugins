@@ -231,6 +231,16 @@ window.__ModuleLoader__.load({
       'drawer.details.passwordCopied': ['密码已复制', 'Password copied'],
       'drawer.details.revealWarning': ['密码已明文显示；注意旁人、录屏和截图，30 秒后自动隐藏。', 'The password is visible in plain text; watch for onlookers, screen recording and screenshots. It hides after 30 seconds.'],
       'drawer.details.revealFailed': ['无法显示密码：{message}', 'Could not reveal the password: {message}'],
+      'drawer.tunnels.title': ['端口转发', 'Port forwarding'],
+      'drawer.tunnels.count': ['{count} 个活动隧道', '{count} active'],
+      'drawer.tunnels.hint': ['本地监听 127.0.0.1，转发到目标机再访问的远程地址；本地端口留空自动分配。', 'Listens on 127.0.0.1 locally and forwards through the SSH host to the remote address. Leave the local port empty for an automatic port.'],
+      'drawer.tunnels.localPort': ['本地端口', 'Local port'],
+      'drawer.tunnels.remoteHost': ['远程主机', 'Remote host'],
+      'drawer.tunnels.remotePort': ['远程端口', 'Remote port'],
+      'drawer.tunnels.start': ['启动', 'Start'],
+      'drawer.tunnels.stop': ['停止隧道', 'Stop tunnel'],
+      'drawer.tunnels.started': ['隧道已启动', 'Tunnel started'],
+      'drawer.tunnels.stopped': ['隧道已停止', 'Tunnel stopped'],
       'drawer.details.system': ['主机信息', 'System'],
       'drawer.details.detect': ['检测信息', 'Detect'],
       'drawer.details.detecting': ['检测中…', 'Detecting…'],
@@ -4542,6 +4552,10 @@ window.__ModuleLoader__.load({
       const { t, notify, localeId, isPending, testHost, inspectHost, savePassword, removePassword } = model
       const [password, setPassword] = React.useState('')
       const [saving, setSaving] = React.useState(false)
+      const [localPort, setLocalPort] = React.useState('')
+      const [remoteHost, setRemoteHost] = React.useState('127.0.0.1')
+      const [remotePort, setRemotePort] = React.useState('')
+      const [startingTunnel, setStartingTunnel] = React.useState(false)
       const [revealedPassword, setRevealedPassword] = React.useState('')
       const [revealing, setRevealing] = React.useState(false)
       const revealTimer = React.useRef(null)
@@ -4603,6 +4617,37 @@ window.__ModuleLoader__.load({
         if (ok) {
           setPassword('')
           hideRevealed()
+        }
+      }
+
+      const activeTunnels = (model.snapshot?.tunnels ?? []).filter((tunnel) => tunnel.host === host.host)
+
+      async function startForward() {
+        if (startingTunnel) return
+        setStartingTunnel(true)
+        try {
+          await callAction('tunnel/start', {
+            host: host.host,
+            localPort: localPort.trim() || '0',
+            remoteHost: remoteHost.trim() || '127.0.0.1',
+            remotePort: remotePort.trim(),
+          })
+          notify(t('drawer.tunnels.started'), 'success')
+          await model.load({ quiet: true })
+        } catch (failure) {
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        } finally {
+          setStartingTunnel(false)
+        }
+      }
+
+      async function stopForward(id) {
+        try {
+          await callAction('tunnel/stop', { id })
+          notify(t('drawer.tunnels.stopped'), 'success')
+          await model.load({ quiet: true })
+        } catch (failure) {
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
         }
       }
 
@@ -4697,6 +4742,45 @@ window.__ModuleLoader__.load({
               : null,
           ),
           h('div', { className: 'ssh-sectionHint' }, t('drawer.details.passwordHint')),
+        ),
+        h(
+          'section',
+          { className: 'ssh-section' },
+          h(
+            'div',
+            { className: 'ssh-sectionHead' },
+            h('h3', { className: 'ssh-sectionTitle' }, t('drawer.tunnels.title')),
+            h(Badge, { tone: activeTunnels.length ? 'ok' : 'muted' }, t('drawer.tunnels.count', { count: activeTunnels.length })),
+          ),
+          h('p', { className: 'ssh-sectionHint' }, t('drawer.tunnels.hint')),
+          h(
+            'div',
+            { className: 'ssh-tunnelForm' },
+            h(TextInput, { value: localPort, onChange: setLocalPort, placeholder: t('drawer.tunnels.localPort'), mono: true }),
+            h('span', { className: 'ssh-tunnelArrow' }, '→'),
+            h(TextInput, { value: remoteHost, onChange: setRemoteHost, placeholder: t('drawer.tunnels.remoteHost'), mono: true }),
+            h(TextInput, { value: remotePort, onChange: setRemotePort, placeholder: t('drawer.tunnels.remotePort'), mono: true }),
+            h(
+              Button,
+              { size: 'sm', variant: 'primary', onClick: () => void startForward(), disabled: startingTunnel || !remotePort.trim() },
+              startingTunnel ? h(Spinner, { size: 12 }) : h(IconPlay, { size: 12 }),
+              t('drawer.tunnels.start'),
+            ),
+          ),
+          activeTunnels.length
+            ? h(
+                'div',
+                { className: 'ssh-tunnelList' },
+                activeTunnels.map((tunnel) =>
+                  h(
+                    'div',
+                    { key: tunnel.id, className: 'ssh-tunnelRow' },
+                    h('code', null, `127.0.0.1:${tunnel.localPort} → ${tunnel.remoteHost}:${tunnel.remotePort}`),
+                    h(IconButton, { title: t('drawer.tunnels.stop'), onClick: () => void stopForward(tunnel.id) }, h(IconClose, { size: 13 })),
+                  ),
+                ),
+              )
+            : null,
         ),
         h(
           'section',
@@ -6114,6 +6198,13 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-kvValue{color:var(--ssh-text-2);min-width:0;word-break:break-word}
 .ssh-kvValue.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .ssh-sectionHint{font-size:11.5px;color:var(--ssh-text-3);line-height:1.65}
+.ssh-tunnelForm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.ssh-tunnelForm .ssh-input{width:100px;min-width:0}
+.ssh-tunnelForm .ssh-input:nth-of-type(2){width:150px}
+.ssh-tunnelArrow{color:var(--ssh-text-2);font-size:12px}
+.ssh-tunnelList{display:flex;flex-direction:column;gap:4px}
+.ssh-tunnelRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 8px;border:.5px solid var(--ssh-border);border-radius:var(--ssh-radius-sm);background:var(--ssh-layer-2);font-size:11.5px}
+.ssh-tunnelRow code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ssh-text-2);overflow:hidden;text-overflow:ellipsis}
 .ssh-credentialReveal{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
 .ssh-revealValue{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:5px 8px;border:.5px solid var(--ssh-border-strong);border-radius:6px;background:var(--ssh-layer-3);color:var(--ssh-text);word-break:break-all;user-select:all}
 .ssh-revealWarning{display:flex;align-items:flex-start;gap:5px;color:var(--ssh-warn)}
