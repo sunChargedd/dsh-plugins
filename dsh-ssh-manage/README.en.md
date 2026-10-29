@@ -22,7 +22,7 @@
 
 `dsh-ssh-manage` is a Web plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It turns the hosts in `~/.ssh/config` into manageable objects in the DSH sidebar:
 
-- **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection;
+- **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection; SSH aliases are globally unique, so use the repeatable Display name for same names across groups;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
 - **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download, connection tests;
@@ -97,16 +97,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.6`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.7`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.6
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.7
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.6
+dsh plugin add dsh-ssh-manage@0.3.7
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.

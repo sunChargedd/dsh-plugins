@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh-manage",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "description": "A DSH sidebar plugin for managing SSH host profiles with a real interactive PTY terminal.",
   "license": "MIT",
   "private": false,

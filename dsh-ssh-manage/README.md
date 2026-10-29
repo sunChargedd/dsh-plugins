@@ -22,7 +22,7 @@
 
 `dsh-ssh-manage` 是 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 的 Web 插件。它把 `~/.ssh/config` 里的主机变成 DSH 侧边栏里可管理、可连接、可运维的对象：
 
-- **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检；
+- **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检；SSH 别名全局唯一，不同分组如需同名请使用可重复的“显示名称”；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **备份迁移**：设置页可导出/导入主机、分组、标签、备注、收藏和密码；导出文件用自定义口令二次加密（scrypt + AES-256-GCM），导入按别名合并；
 - **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载、测试连接；
@@ -99,16 +99,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.6`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.7`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.6
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.7
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.6
+dsh plugin add dsh-ssh-manage@0.3.7
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。

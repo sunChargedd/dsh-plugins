@@ -126,7 +126,7 @@ window.__ModuleLoader__.load({
       'editor.editTitle': ['编辑 SSH 主机', 'Edit SSH host'],
       'editor.alias': ['别名', 'Alias'],
       'editor.aliasPlaceholder': ['prod', 'prod'],
-      'editor.aliasHint': ['~/.ssh/config 中的 Host 名称，作为主机的唯一标识。', 'Host name in ~/.ssh/config; the unique identifier.'],
+      'editor.aliasHint': ['~/.ssh/config 中的 Host 别名，必须全局唯一；不同分组要显示同名，请使用“显示名称”。', 'The Host alias in ~/.ssh/config must be globally unique. To show the same name in different groups, use Display name.'],
       'editor.hostname': ['服务器地址', 'Hostname'],
       'editor.hostnamePlaceholder': ['203.0.113.10 或 example.com', '203.0.113.10 or example.com'],
       'editor.user': ['用户', 'User'],
@@ -141,6 +141,9 @@ window.__ModuleLoader__.load({
       'editor.tagsPlaceholder': ['web, critical（逗号分隔）', 'web, critical (comma separated)'],
       'editor.label': ['显示名称', 'Display name'],
       'editor.labelPlaceholder': ['例如 生产 API', 'e.g. Production API'],
+      'editor.labelHint': ['显示名称可以重复，列表和终端标签优先显示它；SSH 别名仍需唯一。', 'Display names may repeat; lists and terminal tabs prefer it. The SSH alias must still be unique.'],
+      'editor.aliasExists': ['SSH 别名“{alias}”已被主机“{host}”使用（分组：{group}）。SSH 要求别名全局唯一；如果只是想在另一个分组显示同名，请改用建议别名，并把“显示名称”设为 {alias}。', 'SSH alias "{alias}" is already used by "{host}" (group: {group}). SSH aliases must be globally unique. To show the same name in another group, use the suggested alias and set Display name to {alias}.'],
+      'editor.useSuggestedAlias': ['使用建议别名 {alias}', 'Use suggested alias {alias}'],
       'editor.note': ['备注', 'Notes'],
       'editor.notePlaceholder': ['给这台主机的说明，会显示在列表里', 'A short note shown in the list'],
       'editor.passwordSection': ['服务器密码', 'Server password'],
@@ -4729,6 +4732,7 @@ window.__ModuleLoader__.load({
       const [password, setPassword] = React.useState('')
       const [passwordError, setPasswordError] = React.useState('')
       const [formError, setFormError] = React.useState('')
+      const [aliasSuggestion, setAliasSuggestion] = React.useState('')
       const [groupMenuOpen, setGroupMenuOpen] = React.useState(false)
       const groupMenuRef = React.useRef(null)
       const groupOptions = (model.allGroups ?? []).filter((group) => group.key !== '').map((group) => group.key)
@@ -4798,6 +4802,28 @@ window.__ModuleLoader__.load({
           setFormError('')
           return
         }
+        const collision = hosts.find((host) =>
+          host.host !== state.original
+          && (host.host === alias || (Array.isArray(host.aliases) && host.aliases.includes(alias))),
+        )
+        if (collision) {
+          const groupPart = draft.group.trim().replace(/[^A-Za-z0-9_.@-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20)
+          let suggested = groupPart ? `${alias}-${groupPart}` : `${alias}-2`
+          let counter = 2
+          while (hosts.some((host) => host.host === suggested || (Array.isArray(host.aliases) && host.aliases.includes(suggested)))) {
+            suggested = `${alias}-${counter}`
+            counter += 1
+          }
+          suggested = suggested.slice(0, 64)
+          setAliasSuggestion(suggested)
+          setFormError(t('editor.aliasExists', {
+            alias,
+            host: hostName(collision),
+            group: collision.group || t('tree.ungrouped'),
+          }))
+          return
+        }
+        setAliasSuggestion('')
         setPasswordError('')
         setFormError('')
         const saved = await saveEditor({
@@ -4860,13 +4886,36 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'ssh-formSection' },
-          formError ? h('div', { className: 'ssh-formError' }, h(IconAlert, { size: 13 }), h('span', null, formError)) : null,
+          formError
+            ? h(
+                'div',
+                { className: 'ssh-formError' },
+                h(IconAlert, { size: 13 }),
+                h('span', null, formError),
+                aliasSuggestion
+                  ? h(
+                      Button,
+                      {
+                        size: 'sm',
+                        variant: 'ghost',
+                        onClick: () => {
+                          if (!draft.label.trim()) update('label', alias)
+                          update('host', aliasSuggestion)
+                          setAliasSuggestion('')
+                          setFormError('')
+                        },
+                      },
+                      t('editor.useSuggestedAlias', { alias: aliasSuggestion }),
+                    )
+                  : null,
+              )
+            : null,
           h(
             'div',
             { className: 'ssh-formGrid' },
             h(
               Field,
-              { label: t('editor.alias') },
+              { label: t('editor.alias'), hint: t('editor.aliasHint') },
               h(TextInput, {
                 value: draft.host,
                 onChange: (value) => update('host', value),
@@ -4964,7 +5013,7 @@ window.__ModuleLoader__.load({
             ),
             h(
               Field,
-              { label: t('editor.label') },
+              { label: t('editor.label'), hint: t('editor.labelHint') },
               h(TextInput, {
                 value: draft.label,
                 onChange: (value) => update('label', value),
