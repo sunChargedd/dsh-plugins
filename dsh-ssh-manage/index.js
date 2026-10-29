@@ -293,6 +293,36 @@ function stopTunnel(id) {
   return { stopped: true, id }
 }
 
+async function handleSshCommand(paths, rawInput) {
+  const line = String(rawInput ?? '').trim()
+  if (!line) {
+    const current = await state(paths)
+    const text = current.hosts.length
+      ? ['SSH hosts:', ...current.hosts.map((host) => `- ${host.host}${host.group ? ` [${host.group}]` : ''}${host.label ? ` "${host.label}"` : ''}`), '', 'Use /ssh <alias> <command> to execute a command.'].join('\n')
+      : 'No SSH hosts configured. Add one in the dsh-ssh-manage panel.'
+    return { kind: 'success', text }
+  }
+  const firstSpace = line.indexOf(' ')
+  const alias = firstSpace < 0 ? line : line.slice(0, firstSpace)
+  const command = firstSpace < 0 ? '' : line.slice(firstSpace + 1).trim()
+  const settings = await loadAgentSettings(paths)
+  if (settings.readonly && command) return { kind: 'error', text: 'SSH manager is in read-only mode; exec is blocked.' }
+  try {
+    const host = await findHost(paths, alias)
+    if (!command) {
+      const current = await state(paths)
+      const details = current.hosts.find((entry) => entry.host === host.host)
+      return { kind: 'success', text: `${host.host} → ${host.user ? `${host.user}@` : ''}${host.hostname || host.host}:${host.port || 22}${details?.group ? ` [${details.group}]` : ''}\nUse /ssh ${host.host} <command> to execute a command.` }
+    }
+    const result = await execCommand(host, await passwordForHost(paths, host), command)
+    await appendAudit(paths, { action: 'command:exec', host: host.host, detail: command, ok: result.code === 0, error: result.stderr }).catch(() => {})
+    const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    return { kind: 'success', text: `[${host.host}] exit ${result.code}\n${output || '(no output)'}` }
+  } catch (error) {
+    return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 async function state(paths) {
   const [current, metadataResult, passwordsResult] = await Promise.all([
     listSshHosts(paths),
@@ -1157,7 +1187,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, handleSocksConnection, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, handleSocksConnection, handleSshCommand, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
@@ -1297,6 +1327,18 @@ export function apply(ctx) {
         text: () => sshHostCatalogText,
       }),
       'dsh-ssh-manage: host catalog prompt context',
+    )
+  })
+  ctx.inject(['commands'], (child) => {
+    if (!child.commands || typeof child.commands.register !== 'function') return
+    child.effect(
+      () => child.commands.register({
+        name: 'ssh',
+        description: 'List SSH hosts or run a command on one: /ssh <alias> <command>',
+        input: { hint: '<alias> [command]' },
+        handler: async (invocation) => handleSshCommand(paths, invocation.rawInput),
+      }),
+      'dsh-ssh-manage: /ssh command',
     )
   })
 }
