@@ -1,4 +1,6 @@
+import os from 'node:os'
 import path from 'node:path'
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { appendKnownHost, hostKeyType, verifyHostKey } from './known-hosts.js'
 
@@ -26,17 +28,41 @@ const PROBE_COMMAND = [
   `printf 'SYS=%s\\nOS=%s\\nCORES=%s\\nMEM_MB=%s\\nDISK_MB=%s\\n' "$SYS" "$OS" "$CORES" "$MEM_MB" "$DISK_MB"`,
 ].join('\n')
 
+function expandIdentityFile(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  if (raw === '~') return os.homedir()
+  if (raw.startsWith('~/')) return path.join(os.homedir(), raw.slice(2))
+  if (!path.isAbsolute(raw)) return path.resolve(os.homedir(), raw)
+  return raw
+}
+
+function loadPrivateKey(host) {
+  const file = expandIdentityFile(host?.identityFile)
+  if (!file) return null
+  try {
+    return readFileSync(file)
+  } catch {
+    return null
+  }
+}
+
 function connectionConfig(host, password, verifyState = {}) {
   const label = host.host || host.hostname || ''
+  const privateKey = loadPrivateKey(host)
+  const agent = process.env.SSH_AUTH_SOCK || undefined
+  const hasPassword = typeof password === 'string' && password.length > 0
   const config = {
     host: host.hostname || host.host,
     port: Number(host.port || 22),
     username: host.user || undefined,
-    password,
+    ...(hasPassword ? { password } : {}),
+    ...(privateKey ? { privateKey } : {}),
+    ...(agent ? { agent } : {}),
     readyTimeout: DEFAULT_TIMEOUT,
     keepaliveInterval: 15_000,
     keepaliveCountMax: 3,
-    tryKeyboard: true,
+    tryKeyboard: hasPassword,
     hostVerifier: (key) => {
       // Emergency-only escape hatch: disables host-key verification entirely.
       if (process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY === '1') return true
@@ -67,7 +93,10 @@ function connectionConfig(host, password, verifyState = {}) {
 }
 
 function connect(host, password, timeout = DEFAULT_TIMEOUT) {
-  if (typeof password !== 'string' || password.length === 0) return Promise.reject(new Error('Password is required'))
+  const agent = process.env.SSH_AUTH_SOCK
+  if ((typeof password !== 'string' || password.length === 0) && !loadPrivateKey(host) && !agent) {
+    return Promise.reject(new Error('Password or SSH key/ssh-agent authentication is required'))
+  }
   return new Promise((resolve, reject) => {
     const client = new Client()
     const verifyState = {}
@@ -95,9 +124,11 @@ function connect(host, password, timeout = DEFAULT_TIMEOUT) {
     })
     client.once('error', fail)
     // Some hardened hosts only offer keyboard-interactive with the same password.
-    client.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
-      finish(prompts.map(() => password))
-    })
+    if (typeof password === 'string' && password.length > 0) {
+      client.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
+        finish(prompts.map(() => password))
+      })
+    }
     try { client.connect(connectionConfig(host, password, verifyState)) } catch (error) { fail(error) }
   })
 }

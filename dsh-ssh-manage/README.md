@@ -41,7 +41,7 @@
 - 表格列可配置（信息列 / 备注列 / 紧凑行高），窄屏自适应。
 - 主机详情抽屉：地址、用户、端口、分组、标签、备注、发行版、CPU、内存、磁盘、延迟，以及「测试连接」「巡检」。
 - 所有写操作先备份、再临时文件 + 原子重命名；解析失败时拒绝写入，不覆盖原配置。
-- 只更新受管字段（`Host`、`HostName`、`User`、`Port`）；`IdentityFile`、`ProxyJump`、`ForwardAgent`、`Include`、`LocalForward`、注释、空行和其它别名原样保留。
+- 只更新受管字段（`Host`、`HostName`、`User`、`Port`、`IdentityFile`、`ProxyJump`、`ForwardAgent`）；`Include`、`LocalForward`、注释、空行和其它别名原样保留。
 
 ### 交互式终端
 
@@ -100,16 +100,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.12`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.13`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.12
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.13
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.12
+dsh plugin add dsh-ssh-manage@0.3.13
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -180,7 +180,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 | --- | --- |
 | `index.js` | Host 插件：HTTP/SSE/WS 路由、action 分发、PTY 会话、`ssh_manager` 工具。 |
 | `client.js` | 浏览器插件：侧边栏入口、管理页、xterm 终端；只 `require('react')`。 |
-| `lib/ssh-client.js` | ssh2 密码认证、PTY、exec、SFTP、巡检；known_hosts 主机密钥校验与 keepalive。 |
+| `lib/ssh-client.js` | ssh2 密码 / IdentityFile / ssh-agent 认证、PTY、exec、SFTP、巡检；known_hosts 校验与 keepalive。 |
 | `lib/known-hosts.js` | `known_hosts` 解析与主机密钥校验（plain/bracket/wildcard/hashed/revoked，SHA256 指纹）。 |
 | `lib/ssh-config.js` | `~/.ssh/config` 解析、局部写入、备份、原子保存。 |
 | `lib/storage.js` / `lib/vault.js` / `lib/metadata.js` | 状态目录、AES-256-GCM 凭据仓库、主机元数据。 |
@@ -222,7 +222,7 @@ npm test
 
 - **主机密钥校验**：依赖本机 `known_hosts`；首次连接可在终端错误页核对 `SHA256:` 指纹后一键信任并写入；密钥变更不会自动信任，需先核对并移除旧条目。只读取 `~/.ssh/known_hosts` / `SSH_KNOWN_HOSTS`，不读取 ssh_config 的 `UserKnownHostsFile`/`GlobalKnownHostsFile`，也不支持 SSH CA 主机证书。紧急情况下可设置 `DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 临时关闭校验。
 - **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；浏览器通过 `/pty/touch` 心跳续期，Host 侧超过 30 分钟无输出、输入或心跳的会话会作为孤儿清理（最大 16 个）。
-- **仅密码认证**：不支持 IdentityFile / SSH agent / ProxyJump 传输；配置中的这些字段会原样保留，但不会用于连接。ProxyJump 主机会明确报错。
+- **认证方式**：支持已保存密码、`IdentityFile` 私钥和 `SSH_AUTH_SOCK` ssh-agent；私钥路径支持 `~`。带 passphrase 的加密私钥目前不弹口令，建议用 ssh-agent 加载。ProxyJump 传输仍不支持，会明确报错。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。

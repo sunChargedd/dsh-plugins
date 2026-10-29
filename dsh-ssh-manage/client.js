@@ -82,6 +82,7 @@ window.__ModuleLoader__.load({
       'latency.unknown': ['未测试', 'Not tested'],
       'credential.password': ['密码', 'Password'],
       'credential.none': ['未配置', 'Not set'],
+      'credential.key': ['SSH 密钥', 'SSH key'],
       'empty.title': ['还没有 SSH 主机', 'No SSH hosts yet'],
       'empty.body': ['从 ~/.ssh/config 读取主机，或直接在这里新建一个。', 'Hosts come from ~/.ssh/config, or create one here.'],
       'empty.new': ['新建主机', 'New host'],
@@ -152,6 +153,9 @@ window.__ModuleLoader__.load({
       'editor.passwordOptional': ['服务器密码（留空保持不变）', 'Server password (leave blank to keep)'],
       'editor.passwordRequiredError': ['请填写服务器密码。', 'Server password is required.'],
       'editor.passwordRequiredHint': ['密码使用 AES-256-GCM 加密保存在插件自己的目录，不会写入 ~/.ssh/config。', 'Encrypted with AES-256-GCM in the plugin state directory; never written to ~/.ssh/config.'],
+      'editor.identityFile': ['私钥文件', 'Identity file'],
+      'editor.identityFileHint': ['可选，例如 ~/.ssh/id_ed25519；留空则尝试 ssh-agent 和已保存密码。', 'Optional, e.g. ~/.ssh/id_ed25519; leave empty to try ssh-agent and the saved password.'],
+      'editor.passwordAuthOptional': ['密码（可选，仅作为密钥/agent 失败时的备用）', 'Password (optional; fallback when key/agent auth fails)'],
       'editor.passwordExisting': ['已保存密码，填写新密码可替换；留空则保持不变。', 'A password is stored; type a new one to replace it, or leave blank.'],
       'editor.required': ['请填写别名和服务器地址。', 'Alias and hostname are required.'],
       'editor.invalidAlias': ['别名只能包含字母、数字、点、下划线、@ 和短横线。', 'Alias may only contain letters, digits, dot, underscore, @ and dash.'],
@@ -189,7 +193,7 @@ window.__ModuleLoader__.load({
       'terminal.copyFailed': ['复制失败，请检查浏览器剪贴板权限。', 'Copy failed; check browser clipboard permissions.'],
       'terminal.pasteFailed': ['粘贴失败，请检查浏览器剪贴板权限。', 'Paste failed; check browser clipboard permissions.'],
       'terminal.backendHint': ['无法连接到插件后端。如果刚更新插件，请重启 DSH 后重试。', 'Cannot reach the plugin backend. If the plugin was just updated, restart DSH and retry.'],
-      'terminal.passwordMissing': ['该主机还没有保存密码，请先打开「主机详情」设置服务器密码。', 'No password stored for this host. Open Details and set the server password first.'],
+      'terminal.passwordMissing': ['该主机没有可用的密码或密钥认证，请打开「主机详情」配置密码或私钥。', 'No usable password or key auth for this host. Open Details to configure a password or identity file.'],
       'drawer.exit': ['退出码 {code}', 'exit {code}'],
       'drawer.files.path': ['远程路径', 'Remote path'],
       'drawer.files.up': ['上级目录', 'Parent directory'],
@@ -400,6 +404,7 @@ window.__ModuleLoader__.load({
 
     function credentialInfo(host, t) {
       if (host.passwordConfigured) return { key: 'password', label: t('credential.password'), tone: 'ok' }
+      if (host.identityFile) return { key: 'key', label: t('credential.key'), tone: 'ok' }
       return { key: 'none', label: t('credential.none'), tone: 'muted' }
     }
 
@@ -2889,7 +2894,7 @@ window.__ModuleLoader__.load({
                   },
                 },
                 h('span', {
-                  className: cx('ssh-sessionDot', credential ? (credential.key === 'password' ? 'ok' : 'warn') : 'warn'),
+                  className: cx('ssh-sessionDot', credential ? (credential.key === 'password' || credential.key === 'key' ? 'ok' : 'warn') : 'warn'),
                 }),
                 h('span', {
                   className: cx('ssh-sessionState', sessionStates[session.id] ?? 'loading'),
@@ -4173,7 +4178,7 @@ window.__ModuleLoader__.load({
               ),
               message ? h('div', { className: 'ssh-terminalOverlayBody' }, message) : null,
               hostKeyError ? h('div', { className: 'ssh-terminalOverlayBody' }, t('terminal.hostKeyHint')) : null,
-              status === 'error' && host.passwordConfigured !== true
+              status === 'error' && host.passwordConfigured !== true && !host.identityFile && model.snapshot?.agentAvailable !== true
                 ? h('div', { className: 'ssh-terminalOverlayBody' }, t('terminal.passwordMissing'))
                 : null,
               status === 'error' || status === 'closed'
@@ -4773,7 +4778,8 @@ window.__ModuleLoader__.load({
       const groupMenuRef = React.useRef(null)
       const groupOptions = (model.allGroups ?? []).filter((group) => group.key !== '').map((group) => group.key)
       const busy = isPending('editor')
-      const passwordRequired = !original || original.passwordConfigured !== true
+      const agentAvailable = model.snapshot?.agentAvailable === true
+      const passwordRequired = (!original || original.passwordConfigured !== true) && !draft.identityFile.trim() && !agentAvailable
 
       function update(field, value) {
         setDraft((prev) => ({ ...prev, [field]: value }))
@@ -4992,6 +4998,16 @@ window.__ModuleLoader__.load({
             ),
             h(
               Field,
+              { label: t('editor.identityFile'), hint: t('editor.identityFileHint') },
+              h(TextInput, {
+                value: draft.identityFile,
+                onChange: (value) => update('identityFile', value),
+                placeholder: '~/.ssh/id_ed25519',
+                mono: true,
+              }),
+            ),
+            h(
+              Field,
               { label: t('editor.group') },
               h(
                 'div',
@@ -5083,8 +5099,16 @@ window.__ModuleLoader__.load({
           h(
             Field,
             {
-              label: passwordRequired ? t('editor.passwordRequired') : t('editor.passwordOptional'),
-              hint: passwordRequired ? t('editor.passwordRequiredHint') : t('editor.passwordExisting'),
+              label: passwordRequired
+                ? t('editor.passwordRequired')
+                : original && original.passwordConfigured
+                  ? t('editor.passwordOptional')
+                  : t('editor.passwordAuthOptional'),
+              hint: passwordRequired
+                ? t('editor.passwordRequiredHint')
+                : original && original.passwordConfigured
+                  ? t('editor.passwordExisting')
+                  : t('editor.passwordRequiredHint'),
             },
             h(TextInput, {
               type: 'password',

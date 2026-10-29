@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { createHmac } from 'node:crypto'
+import { createHmac, generateKeyPairSync } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPaths } from '../lib/ssh-config.js'
@@ -235,7 +235,28 @@ try {
   const trusted = trustPendingHostKey('pending-host', { SSH_KNOWN_HOSTS: trustedPath })
   assert.equal(trusted.saved, true)
   assert.equal(sshTest.pendingHostKeyFailures.has('pending-host'), false)
-  console.log('ok - host keys can be explicitly trusted into known_hosts')
+  
+// Connection config includes a configured IdentityFile and ssh-agent, with no password required.
+{
+  const keyPath = path.join(temp, 'id_ed25519_test')
+  const pair = generateKeyPairSync('ed25519', {
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  })
+  writeFileSync(keyPath, pair.privateKey)
+  const config = sshTest.connectionConfig({ host: 'keyhost', hostname: '192.0.2.1', identityFile: keyPath }, '', {})
+  assert.ok(Buffer.isBuffer(config.privateKey))
+  assert.equal(config.tryKeyboard, false)
+  assert.equal(config.password, undefined)
+  const savedAgent = process.env.SSH_AUTH_SOCK
+  process.env.SSH_AUTH_SOCK = '/tmp/test-agent.sock'
+  const agentConfig = sshTest.connectionConfig({ host: 'agenthost', hostname: '192.0.2.1' }, '', {})
+  assert.equal(agentConfig.agent, '/tmp/test-agent.sock')
+  if (savedAgent === undefined) delete process.env.SSH_AUTH_SOCK
+  else process.env.SSH_AUTH_SOCK = savedAgent
+  console.log('ok - connection config supports IdentityFile and ssh-agent without a password')
+}
+console.log('ok - host keys can be explicitly trusted into known_hosts')
 }
 console.log('ok - known_hosts parsing/matching, mismatch/revoked rejection, keepalive and insecure escape')
 
@@ -403,14 +424,17 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
     backupDir: path.join(temp, '.passwordless', 'backups'),
   }
   await mkdir(path.dirname(passwordlessPaths.configPath), { recursive: true })
-  await writeFile(passwordlessPaths.configPath, 'Host nopass\n  HostName 192.0.2.1\n  IdentityFile ~/.ssh/id_ed25519\n', 'utf8')
+  await writeFile(passwordlessPaths.configPath, 'Host nopass\n  HostName 192.0.2.1\n', 'utf8')
+  const savedAgent = process.env.SSH_AUTH_SOCK
+  delete process.env.SSH_AUTH_SOCK
   const testStarted = Date.now()
-  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/test', { host: 'nopass' }), /Password is not configured for SSH host "nopass"/)
-  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/exec', { host: 'nopass', command: 'true' }), /Password is not configured for SSH host "nopass"/)
-  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, null, 'true'), /Password is required/)
-  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, '', 'true'), /Password is required/)
+  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/test', { host: 'nopass' }), /Password or SSH key\/ssh-agent authentication is required/)
+  await assert.rejects(() => runAction(passwordlessPaths, 'ssh/exec', { host: 'nopass', command: 'true' }), /Password or SSH key\/ssh-agent authentication is required/)
+  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, null, 'true'), /Password or SSH key\/ssh-agent authentication is required/)
+  await assert.rejects(() => execCommand({ host: 'nopass', hostname: '192.0.2.1' }, '', 'true'), /Password or SSH key\/ssh-agent authentication is required/)
+  if (savedAgent !== undefined) process.env.SSH_AUTH_SOCK = savedAgent
   assert.ok(Date.now() - testStarted < 5_000)
-  console.log('ok - password-only transport rejects a host without a stored password before connecting')
+  console.log('ok - no-auth transport rejects a host without password, key or agent before connecting')
 
   assert.deepEqual(parseProbeOutput('SYS=Linux\nOS=Ubuntu 22.04.3 LTS\nCORES=8\nMEM_MB=16384\nDISK_MB=51200\n'), { system: 'Ubuntu 22.04.3 LTS', cpuCores: 8, memoryGB: 16, diskGB: 50 })
   assert.deepEqual(parseProbeOutput('SYS=Darwin\n'), { system: 'Darwin', cpuCores: 0, memoryGB: 0, diskGB: 0 })

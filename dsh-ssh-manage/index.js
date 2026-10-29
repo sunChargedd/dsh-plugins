@@ -135,6 +135,7 @@ async function state(paths) {
     ...current,
     stateDir,
     backupDir: paths.backupDir || path.join(stateDir, 'backups'),
+    agentAvailable: Boolean(process.env.SSH_AUTH_SOCK),
     hosts: current.hosts.map((host) => ({ ...host, ...(entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
     warnings,
   }
@@ -153,10 +154,8 @@ async function findHost(paths, alias) {
   return host
 }
 
-async function requirePassword(paths, host) {
-  const password = await getPassword(paths, host.host)
-  if (!password) throw new Error(`Password is not configured for SSH host "${host.host}"`)
-  return password
+async function passwordForHost(paths, host) {
+  return (await getPassword(paths, host.host)) ?? ''
 }
 
 /** Move metadata and the encrypted password from a previous alias to the renamed host. */
@@ -234,7 +233,7 @@ export async function runAction(paths, action, params = {}) {
     }
     case 'ssh/test': {
       const host = await findHost(paths, params.host)
-      const password = await requirePassword(paths, host)
+      const password = await passwordForHost(paths, host)
       const started = Date.now()
       const result = await testConnection(host, password)
       const latencyMs = Math.round(Date.now() - started)
@@ -243,7 +242,7 @@ export async function runAction(paths, action, params = {}) {
     }
     case 'ssh/inspect': {
       const host = await findHost(paths, params.host)
-      const result = await inspectHost(host, await requirePassword(paths, host))
+      const result = await inspectHost(host, await passwordForHost(paths, host))
       const metadata = await updateMetadata(paths, host.host, {
         system: result.system,
         cpuCores: result.cpuCores,
@@ -256,37 +255,37 @@ export async function runAction(paths, action, params = {}) {
     }
     case 'ssh/exec': {
       const host = await findHost(paths, params.host)
-      return await execCommand(host, await requirePassword(paths, host), requireString(params, 'command'), params)
+      return await execCommand(host, await passwordForHost(paths, host), requireString(params, 'command'), params)
     }
     case 'ssh/batch-exec': {
       const aliases = Array.isArray(params.hosts) ? params.hosts : []
       if (aliases.length === 0) throw new Error('hosts is required')
       const hosts = await Promise.all(aliases.map((alias) => findHost(paths, alias)))
-      return { results: await batchExec(hosts, (host) => requirePassword(paths, host), requireString(params, 'command'), params) }
+      return { results: await batchExec(hosts, (host) => passwordForHost(paths, host), requireString(params, 'command'), params) }
     }
     case 'sftp/list': {
       const host = await findHost(paths, params.host)
-      return { entries: await listRemoteFiles(host, await requirePassword(paths, host), params.path || '.') }
+      return { entries: await listRemoteFiles(host, await passwordForHost(paths, host), params.path || '.') }
     }
     case 'sftp/upload': {
       const host = await findHost(paths, params.host)
-      return await uploadFile(host, await requirePassword(paths, host), requireString(params, 'path'), requireString(params, 'contentBase64'))
+      return await uploadFile(host, await passwordForHost(paths, host), requireString(params, 'path'), requireString(params, 'contentBase64'))
     }
     case 'sftp/download': {
       const host = await findHost(paths, params.host)
-      return await downloadFile(host, await requirePassword(paths, host), requireString(params, 'path'))
+      return await downloadFile(host, await passwordForHost(paths, host), requireString(params, 'path'))
     }
     case 'sftp/mkdir': {
       const host = await findHost(paths, params.host)
-      return await makeRemoteDirectory(host, await requirePassword(paths, host), requireString(params, 'path'))
+      return await makeRemoteDirectory(host, await passwordForHost(paths, host), requireString(params, 'path'))
     }
     case 'sftp/rename': {
       const host = await findHost(paths, params.host)
-      return await renameRemotePath(host, await requirePassword(paths, host), requireString(params, 'path'), requireString(params, 'newPath'), { overwrite: params.overwrite === true })
+      return await renameRemotePath(host, await passwordForHost(paths, host), requireString(params, 'path'), requireString(params, 'newPath'), { overwrite: params.overwrite === true })
     }
     case 'sftp/delete': {
       const host = await findHost(paths, params.host)
-      return await deleteRemotePath(host, await requirePassword(paths, host), requireString(params, 'path'))
+      return await deleteRemotePath(host, await passwordForHost(paths, host), requireString(params, 'path'))
     }
     default:
       throw new Error(`Unknown action: ${String(action)}`)
@@ -432,7 +431,7 @@ async function openTextSession(paths, payload, runtime = defaultPtyRuntime) {
       throw new Error('Too many terminal sessions')
     }
     const host = await findHost(paths, alias)
-    const password = await requirePassword(paths, host)
+    const password = await passwordForHost(paths, host)
     if (!isPtyRuntimeActive(runtime, generation)) throw new Error('Terminal runtime is not active')
     const session = await openPty(host, password, { cols, rows })
     if (!isPtyRuntimeActive(runtime, generation)) {
@@ -767,7 +766,7 @@ async function handlePtyUpgrade(ctx, paths, req, socket, head, runtime = default
         const cols = boundedInteger(message.cols, 20, 500, 120)
         const rows = boundedInteger(message.rows, 5, 300, 32)
         const host = await findHost(paths, alias)
-        const password = await requirePassword(paths, host)
+        const password = await passwordForHost(paths, host)
         if (!isPtyRuntimeActive(runtime, generation)) throw new Error('Terminal runtime is not active')
         session = await openPty(host, password, { cols, rows })
         if (cleaned || !isPtyRuntimeActive(runtime, generation)) {
