@@ -14,6 +14,8 @@ export function storagePaths(paths = {}) {
     vaultPath: paths.vaultPath || path.join(stateDir, 'vault.json'),
     keyPath: paths.keyPath || path.join(stateDir, 'key'),
     metadataPath: paths.metadataPath || path.join(stateDir, 'hosts.json'),
+    agentSettingsPath: paths.agentSettingsPath || path.join(stateDir, 'agent-settings.json'),
+    auditPath: paths.auditPath || path.join(stateDir, 'audit.jsonl'),
   }
 }
 

@@ -24,6 +24,7 @@
 
 - **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检；SSH 别名全局唯一，不同分组如需同名请使用可重复的“显示名称”；
 - **DSH Agent 集成**：向 DSH 系统提示注入精简主机目录（别名/分组/显示名），地址等详情由 `list_hosts` 按需获取以控制 token；Agent 可直接用 `ssh_manager` 执行命令、批量命令、巡检和 SFTP 操作；
+- **Agent 安全**：设置页可开启只读模式；危险操作可选“执行前询问”走 DSH 审批；exec、批量命令、SFTP 写操作和主机变更会写入本地审计日志（自动脱敏命令中的密码/token）；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **备份迁移**：设置页可导出/导入主机、分组、标签、备注、收藏和密码；导出文件用自定义口令二次加密（scrypt + AES-256-GCM），导入按别名合并；
 - **端口转发**：主机详情启动 `127.0.0.1:本地端口 → 远程主机:端口` 本地转发或本地 SOCKS5 代理，支持 ProxyJump/密钥，插件卸载时自动关闭；
@@ -101,16 +102,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.17`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.18`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.17
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.18
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.17
+dsh plugin add dsh-ssh-manage@0.3.18
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -226,6 +227,7 @@ npm test
 - **认证方式**：支持已保存密码、`IdentityFile` 私钥和 `SSH_AUTH_SOCK` ssh-agent；私钥路径支持 `~`。带 passphrase 的加密私钥目前不弹口令，建议用 ssh-agent 加载。
 - **ProxyJump**：支持单跳，填已有主机别名（复用该主机的密码/密钥）或 `user@host:port`（使用密钥/agent）；多跳暂不支持。跳板机主机密钥同样必须已在 known_hosts 中。
 - **端口转发**：支持 LocalForward、RemoteForward（默认仅绑定跳板/目标服务器的 127.0.0.1）和本地 SOCKS5。隧道只存在于当前 Host 进程，插件卸载/DSH 退出后关闭。
+- **Agent 审批**：需要 DSH 审批服务；审批不可用时危险操作会 fail closed（拒绝）。只读模式仍允许 list/test/inspect/下载。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。

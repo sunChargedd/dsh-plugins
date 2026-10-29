@@ -318,6 +318,13 @@ window.__ModuleLoader__.load({
       'transfer.importWarnings': ['{count} 条记录未能导入，请查看提示。', '{count} record(s) could not be imported.'],
       'settings.vaultCount': ['{count} 台主机已保存密码', '{count} hosts have a stored password'],
       'settings.vaultNone': ['还没有保存任何密码', 'No passwords stored yet'],
+      'settings.agentSecurity': ['Agent 安全', 'Agent security'],
+      'settings.readonly': ['只读模式（阻止 Agent 执行命令、写入和删除）', 'Read-only mode (block Agent exec, writes and deletes)'],
+      'settings.approvalAudit': ['只审计', 'Audit only'],
+      'settings.approvalAsk': ['执行前询问', 'Ask before executing'],
+      'settings.approvalHint': ['“执行前询问”会通过 DSH 审批弹窗确认 exec、批量命令和破坏性 SFTP 操作。', 'Ask before executing uses the DSH approval prompt for exec, batch commands and destructive SFTP.'],
+      'settings.audit': ['最近审计', 'Recent audit'],
+      'settings.auditEmpty': ['暂无 Agent 操作记录。', 'No Agent operations recorded yet.'],
       'settings.appearance': ['外观', 'Appearance'],
       'settings.infoColumn': ['显示信息列', 'Show info column'],
       'settings.notesColumn': ['显示备注列', 'Show notes column'],
@@ -5759,8 +5766,18 @@ window.__ModuleLoader__.load({
     }
 
     function SettingsTab({ model }) {
-      const { t, snapshot, hosts, columns, setColumns, copyValue, load, refreshing } = model
+      const { t, snapshot, hosts, columns, setColumns, copyValue, load, refreshing, notify } = model
       const [transferMode, setTransferMode] = React.useState(null)
+      const agentSettings = snapshot?.agentSettings ?? { approval: 'audit', readonly: false }
+      const audit = snapshot?.audit ?? []
+      const updateAgentSettings = async (patch) => {
+        try {
+          await callAction('agent/settings', { settings: { ...agentSettings, ...patch } })
+          await load({ quiet: true })
+        } catch (failure) {
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        }
+      }
       const passwordCount = hosts.filter((host) => host.passwordConfigured).length
       const exists = snapshot?.exists === true
       return h(
@@ -5856,6 +5873,55 @@ window.__ModuleLoader__.load({
                 h(IconUpload, { size: 13 }),
                 t('settings.import'),
               ),
+            ),
+          ),
+          h(
+            'section',
+            { className: 'ssh-card' },
+            h(
+              'div',
+              { className: 'ssh-cardHead' },
+              h('h3', null, t('settings.agentSecurity')),
+              h(Badge, { tone: agentSettings.readonly ? 'warn' : 'ok' }, agentSettings.readonly ? t('settings.readonly') : t('settings.approvalAudit')),
+            ),
+            h(
+              'div',
+              { className: 'ssh-switchList' },
+              h(
+                'div',
+                { className: 'ssh-settingRow' },
+                h(Switch, {
+                  checked: agentSettings.readonly,
+                  onChange: (value) => void updateAgentSettings({ readonly: value }),
+                  label: t('settings.readonly'),
+                }),
+              ),
+              h(
+                'div',
+                { className: 'ssh-settingRow' },
+                h(
+                  'div',
+                  { className: 'ssh-approvalChoice' },
+                  h(Button, { size: 'sm', variant: agentSettings.approval === 'audit' ? 'primary' : 'ghost', onClick: () => void updateAgentSettings({ approval: 'audit' }) }, t('settings.approvalAudit')),
+                  h(Button, { size: 'sm', variant: agentSettings.approval === 'ask' ? 'primary' : 'ghost', onClick: () => void updateAgentSettings({ approval: 'ask' }) }, t('settings.approvalAsk')),
+                ),
+              ),
+            ),
+            h('p', { className: 'ssh-cardDesc' }, t('settings.approvalHint')),
+            h('div', { className: 'ssh-auditList' },
+              audit.length === 0
+                ? h('div', { className: 'ssh-sectionHint' }, t('settings.auditEmpty'))
+                : audit.slice(0, 10).map((entry, index) =>
+                    h(
+                      'div',
+                      { key: `${entry.time}-${index}`, className: 'ssh-auditRow', title: entry.error || entry.detail },
+                      h('span', { className: cx('ssh-auditDot', entry.ok ? 'ok' : 'error') }),
+                      h('code', null, entry.action),
+                      h('span', { className: 'ssh-auditHost' }, entry.host || '—'),
+                      h('span', { className: 'ssh-auditDetail' }, entry.detail || entry.error || '—'),
+                      h('time', null, formatDateTime(entry.time, model.localeId)),
+                    ),
+                  ),
             ),
           ),
           h(
@@ -6236,6 +6302,15 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-kvValue.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .ssh-sectionHint{font-size:11.5px;color:var(--ssh-text-3);line-height:1.65}
 .ssh-tunnelTypes{display:flex;gap:4px;margin-bottom:8px}
+.ssh-approvalChoice{display:flex;gap:6px}
+.ssh-auditList{display:flex;flex-direction:column;gap:4px;margin-top:8px}
+.ssh-auditRow{display:grid;grid-template-columns:8px 130px 100px minmax(0,1fr) auto;align-items:center;gap:8px;padding:5px 8px;border:.5px solid var(--ssh-border);border-radius:6px;background:var(--ssh-layer-2);font-size:11px}
+.ssh-auditRow code{font-size:10.5px;color:var(--ssh-text-2);overflow:hidden;text-overflow:ellipsis}
+.ssh-auditDot{width:6px;height:6px;border-radius:50%;background:var(--ssh-success)}
+.ssh-auditDot.error{background:var(--ssh-danger)}
+.ssh-auditHost{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ssh-text-2);overflow:hidden;text-overflow:ellipsis}
+.ssh-auditDetail{color:var(--ssh-text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ssh-auditRow time{color:var(--ssh-text-3);white-space:nowrap}
 .ssh-tunnelType{appearance:none;height:26px;padding:0 10px;border:.5px solid var(--ssh-border);border-radius:999px;background:transparent;color:var(--ssh-text-2);font:inherit;font-size:11.5px;cursor:pointer}
 .ssh-tunnelType.active{background:color-mix(in srgb,var(--ssh-brand) 12%,transparent);border-color:var(--ssh-brand);color:var(--ssh-brand)}
 .ssh-tunnelForm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px}

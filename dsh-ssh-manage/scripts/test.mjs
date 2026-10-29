@@ -10,6 +10,8 @@ import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/met
 import { __test as sshTest, deleteRemotePath, execCommand, makeRemoteDirectory, renameRemotePath, trustPendingHostKey } from '../lib/ssh-client.js'
 import { appendKnownHost, hostKeyType, knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
 import { createExport, importExport } from '../lib/transfer.js'
+import { loadAgentSettings, saveAgentSettings } from '../lib/agent-settings.js'
+import { readAudit } from '../lib/audit.js'
 import { __test as indexTest } from '../index.js'
 
 const { normalizeEntry } = metadataTest
@@ -533,6 +535,17 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   assert.throws(() => indexTest.tunnelPort('-1', 'Local port'), /between 1 and 65535/)
   assert.throws(() => indexTest.tunnelPort('70000', 'Local port'), /between 1 and 65535/)
   assert.deepEqual((await runAction(routePaths, 'tunnel/list', {})).tunnels, [])
+  await saveAgentSettings(routePaths, { readonly: true, approval: 'audit' })
+  const readonlyTool = indexTest.managerTool(routePaths)
+  await assert.rejects(() => readonlyTool.execute({ action: 'exec', host: 'renamed', command: 'true' }), /read-only mode/)
+  await saveAgentSettings(routePaths, { readonly: false, approval: 'audit' })
+  const auditedTool = indexTest.managerTool(routePaths)
+  await auditedTool.execute({ action: 'inspect_host', host: 'renamed' }).catch(() => {})
+  const auditEntries = await readAudit(routePaths, 10)
+  assert.ok(auditEntries.length >= 1)
+  assert.equal(auditEntries[0].action, 'inspect_host')
+  assert.equal((await loadAgentSettings(routePaths)).readonly, false)
+  console.log('ok - agent settings enforce read-only mode and write audit entries')
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))

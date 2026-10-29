@@ -7,6 +7,8 @@ import { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost } from './lib
 import { deleteMetadata, loadMetadata, updateMetadata } from './lib/metadata.js'
 import { batchExec, connect, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, trustPendingHostKey, uploadFile } from './lib/ssh-client.js'
 import { storagePaths } from './lib/storage.js'
+import { appendAudit, readAudit } from './lib/audit.js'
+import { loadAgentSettings, saveAgentSettings } from './lib/agent-settings.js'
 import { createExport, importExport } from './lib/transfer.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
 
@@ -312,6 +314,8 @@ async function state(paths) {
     stateDir,
     backupDir: paths.backupDir || path.join(stateDir, 'backups'),
     agentAvailable: Boolean(process.env.SSH_AUTH_SOCK),
+    agentSettings: await loadAgentSettings(paths).catch(() => ({ approval: 'audit', readonly: false })),
+    audit: await readAudit(paths, 20).catch(() => []),
     tunnels: tunnelList(),
     hosts: current.hosts.map((host) => ({ ...host, ...(entries[host.host] || {}), passwordConfigured: passwordSet.has(host.host) })),
     warnings,
@@ -445,6 +449,12 @@ export async function runAction(paths, action, params = {}) {
       if (!password) throw new Error('No password is stored for this host')
       return { password }
     }
+    case 'agent/settings': {
+      const settings = await saveAgentSettings(paths, params.settings ?? params)
+      return { settings, state: await state(paths) }
+    }
+    case 'audit/list':
+      return { entries: await readAudit(paths, params.limit), agentSettings: await loadAgentSettings(paths) }
     case 'tunnel/list':
       return { tunnels: tunnelList() }
     case 'tunnel/start':
@@ -532,7 +542,7 @@ export async function runAction(paths, action, params = {}) {
   }
 }
 
-function managerTool(paths) {
+function managerTool(paths, ctx) {
   return {
     name: 'ssh_manager',
     description: 'Manage SSH hosts, encrypted local passwords, remote commands and SFTP operations. Hosts entered in the dsh-ssh-manage panel are listed in the system prompt; when the user asks to operate on a server, call this tool directly with its alias. Use action=exec for one command, batch_exec for several hosts, sftp_* for files. Passwords are never returned.',
@@ -561,49 +571,84 @@ function managerTool(paths) {
       schema: { type: 'object' },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }],
     },
-    execute: async (args) => {
+    execute: async (args, runContext) => {
       const input = args && typeof args === 'object' ? args : {}
       const params = { ...input }
       if (input.action !== 'save_host' && input.host && typeof input.host === 'object') params.host = input.host.host
-      switch (input.action) {
-        case 'overview': {
-          const current = await state(paths)
-          return { configPath: current.configPath, hostCount: current.hosts.length }
+      const settings = await loadAgentSettings(paths)
+      const readOnlyAllowed = new Set(['overview', 'list_hosts', 'test_connection', 'inspect_host', 'sftp_list', 'sftp_download'])
+      if (settings.readonly && !readOnlyAllowed.has(input.action)) {
+        throw new Error('SSH manager is in read-only mode; this operation is blocked')
+      }
+      const approvalRequired = new Set(['exec', 'batch_exec', 'sftp_upload', 'sftp_mkdir', 'sftp_rename', 'sftp_delete', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password'])
+      if (settings.approval === 'ask' && approvalRequired.has(input.action)) {
+        const approval = ctx?.get?.('approval')
+        if (!approval || typeof approval.request !== 'function' || !runContext?.agent) {
+          throw new Error('Approval service is unavailable; refusing a dangerous SSH operation')
         }
-        case 'list_hosts':
-          return await state(paths)
-        case 'save_host':
-          return await runAction(paths, 'host/save', params)
-        case 'delete_host':
-          return await runAction(paths, 'host/delete', params)
-        case 'set_metadata':
-          return await runAction(paths, 'host/metadata', params)
-        case 'save_password':
-          return await runAction(paths, 'credential/save', params)
-        case 'delete_password':
-          return await runAction(paths, 'credential/delete', params)
-        case 'test_connection':
-          return await runAction(paths, 'ssh/test', params)
-        case 'inspect_host':
-          return await runAction(paths, 'ssh/inspect', params)
-        case 'exec':
-          return await runAction(paths, 'ssh/exec', params)
-        case 'batch_exec':
-          return await runAction(paths, 'ssh/batch-exec', params)
-        case 'sftp_list':
-          return await runAction(paths, 'sftp/list', params)
-        case 'sftp_upload':
-          return await runAction(paths, 'sftp/upload', params)
-        case 'sftp_download':
-          return await runAction(paths, 'sftp/download', params)
-        case 'sftp_mkdir':
-          return await runAction(paths, 'sftp/mkdir', params)
-        case 'sftp_rename':
-          return await runAction(paths, 'sftp/rename', params)
-        case 'sftp_delete':
-          return await runAction(paths, 'sftp/delete', params)
-        default:
-          throw new Error(`Unknown action: ${String(input.action)}`)
+        const hostLabel = typeof params.host === 'string' ? params.host : Array.isArray(params.hosts) ? params.hosts.join(',') : ''
+        const reason = `SSH ${input.action}${hostLabel ? ` on ${hostLabel}` : ''}${params.command ? `: ${String(params.command).slice(0, 300)}` : ''}`
+        const outcome = await approval.request({
+          agent: runContext.agent,
+          toolName: 'ssh_manager',
+          callId: runContext.callId,
+          reason,
+          displayReason: { en: reason, zh: reason },
+          signal: runContext.signal,
+        })
+        if (outcome !== 'allowed-once') throw new Error(`SSH operation was not approved (${outcome})`)
+      }
+      const hostLabel = typeof params.host === 'string' ? params.host : Array.isArray(params.hosts) ? params.hosts.join(',') : ''
+      const detail = params.command || params.path || (params.host && typeof params.host === 'object' ? params.host.host : '') || ''
+      const executeAction = async () => {
+        switch (input.action) {
+          case 'overview': {
+            const current = await state(paths)
+            return { configPath: current.configPath, hostCount: current.hosts.length }
+          }
+          case 'list_hosts':
+            return await state(paths)
+          case 'save_host':
+            return await runAction(paths, 'host/save', params)
+          case 'delete_host':
+            return await runAction(paths, 'host/delete', params)
+          case 'set_metadata':
+            return await runAction(paths, 'host/metadata', params)
+          case 'save_password':
+            return await runAction(paths, 'credential/save', params)
+          case 'delete_password':
+            return await runAction(paths, 'credential/delete', params)
+          case 'test_connection':
+            return await runAction(paths, 'ssh/test', params)
+          case 'inspect_host':
+            return await runAction(paths, 'ssh/inspect', params)
+          case 'exec':
+            return await runAction(paths, 'ssh/exec', params)
+          case 'batch_exec':
+            return await runAction(paths, 'ssh/batch-exec', params)
+          case 'sftp_list':
+            return await runAction(paths, 'sftp/list', params)
+          case 'sftp_upload':
+            return await runAction(paths, 'sftp/upload', params)
+          case 'sftp_download':
+            return await runAction(paths, 'sftp/download', params)
+          case 'sftp_mkdir':
+            return await runAction(paths, 'sftp/mkdir', params)
+          case 'sftp_rename':
+            return await runAction(paths, 'sftp/rename', params)
+          case 'sftp_delete':
+            return await runAction(paths, 'sftp/delete', params)
+          default:
+            throw new Error(`Unknown action: ${String(input.action)}`)
+        }
+      }
+      try {
+        const result = await executeAction()
+        await appendAudit(paths, { action: input.action, host: hostLabel, detail, ok: true }).catch(() => {})
+        return result
+      } catch (error) {
+        await appendAudit(paths, { action: input.action, host: hostLabel, detail, ok: false, error: error instanceof Error ? error.message : String(error) }).catch(() => {})
+        throw error
       }
     },
   }
@@ -1241,7 +1286,7 @@ export function apply(ctx) {
     'dsh-ssh-manage: pty sessions',
   )
   ctx.inject(['tools'], (child) => {
-    child.effect(() => child.tools.register(managerTool(paths)), 'dsh-ssh-manage: agent tool')
+    child.effect(() => child.tools.register(managerTool(paths, ctx)), 'dsh-ssh-manage: agent tool')
   })
   ctx.inject(['systemPrompt'], (child) => {
     if (!child.systemPrompt || typeof child.systemPrompt.context !== 'function') return

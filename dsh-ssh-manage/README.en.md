@@ -24,6 +24,7 @@
 
 - **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection; SSH aliases are globally unique, so use the repeatable Display name for same names across groups;
 - **DSH Agent integration** — a compact host catalog (alias/group/display name) is injected into the DSH system prompt to keep token use low; full details come from list_hosts on demand, and the Agent uses `ssh_manager` directly for exec, batch commands, inspection and SFTP;
+- **Agent safety** — Settings can enable read-only mode; dangerous actions can “ask before executing” through DSH approval; exec, batch commands, SFTP writes and host changes are written to a local audit log with password/token redaction;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
 - **Port forwarding** — start local `127.0.0.1:local → remote host:port` tunnels or a local SOCKS5 proxy from host details, with ProxyJump/key auth, closed automatically when the plugin unloads;
@@ -99,16 +100,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.17`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.18`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.17
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.18
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.17
+dsh plugin add dsh-ssh-manage@0.3.18
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -223,6 +224,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xt
 - **Authentication**: saved passwords, `IdentityFile` private keys and `SSH_AUTH_SOCK` ssh-agent are supported; `~` is expanded in key paths. Passphrase-protected keys do not prompt for a passphrase yet — load them into ssh-agent.
 - **ProxyJump**: single-hop is supported using an existing host alias (reusing its password/key) or `user@host:port` (key/agent only); multi-hop is not supported yet. The jump host key must already be present in known_hosts.
 - **Port forwarding**: LocalForward, RemoteForward (binds 127.0.0.1 on the SSH server by default) and local SOCKS5 are supported. Tunnels live in the current Host process and close when the plugin or DSH exits.
+- **Agent approval**: requires the DSH approval service; dangerous operations fail closed when it is unavailable. Read-only mode still allows list/test/inspect/download.
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.
