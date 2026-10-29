@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { acceptWebSocket, isWebSocketUpgrade } from './lib/ws.js'
 import { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost } from './lib/ssh-config.js'
 import { deleteMetadata, loadMetadata, updateMetadata } from './lib/metadata.js'
-import { batchExec, downloadFile, execCommand, inspectHost, listRemoteFiles, openPty, testConnection, uploadFile } from './lib/ssh-client.js'
+import { batchExec, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, uploadFile } from './lib/ssh-client.js'
 import { storagePaths } from './lib/storage.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
 
@@ -31,7 +31,7 @@ const ASSETS = [
   { path: '/dsh-ssh-manage/assets/addon-search.js', file: 'addon-search.js', contentType: 'text/javascript; charset=utf-8' },
 ]
 const MAX_BODY_BYTES = 16 * 1024 * 1024
-const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download']
+const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download', 'sftp_mkdir', 'sftp_rename', 'sftp_delete']
 
 async function readJsonBody(req) {
   const chunks = []
@@ -217,6 +217,18 @@ export async function runAction(paths, action, params = {}) {
       const host = await findHost(paths, params.host)
       return await downloadFile(host, await requirePassword(paths, host), requireString(params, 'path'))
     }
+    case 'sftp/mkdir': {
+      const host = await findHost(paths, params.host)
+      return await makeRemoteDirectory(host, await requirePassword(paths, host), requireString(params, 'path'))
+    }
+    case 'sftp/rename': {
+      const host = await findHost(paths, params.host)
+      return await renameRemotePath(host, await requirePassword(paths, host), requireString(params, 'path'), requireString(params, 'newPath'), { overwrite: params.overwrite === true })
+    }
+    case 'sftp/delete': {
+      const host = await findHost(paths, params.host)
+      return await deleteRemotePath(host, await requirePassword(paths, host), requireString(params, 'path'))
+    }
     default:
       throw new Error(`Unknown action: ${String(action)}`)
   }
@@ -241,6 +253,8 @@ function managerTool(paths) {
         command: { type: 'string', description: 'Remote shell command.' },
         hosts: { type: 'array', items: { type: 'string' }, description: 'Host aliases for a batch command.' },
         path: { type: 'string', description: 'Remote SFTP path.' },
+        newPath: { type: 'string', description: 'New remote SFTP path for rename.' },
+        overwrite: { type: 'boolean', description: 'Allow sftp_rename to replace an existing destination (default false).' },
         contentBase64: { type: 'string', description: 'Base64 encoded file content for upload.' },
         metadata: { type: 'object', description: '{ group, tags, favorite, label, note, system, cpuCores, memoryGB, diskGB, latencyMs, checkedAt }' },
       },
@@ -284,6 +298,12 @@ function managerTool(paths) {
           return await runAction(paths, 'sftp/upload', params)
         case 'sftp_download':
           return await runAction(paths, 'sftp/download', params)
+        case 'sftp_mkdir':
+          return await runAction(paths, 'sftp/mkdir', params)
+        case 'sftp_rename':
+          return await runAction(paths, 'sftp/rename', params)
+        case 'sftp_delete':
+          return await runAction(paths, 'sftp/delete', params)
         default:
           throw new Error(`Unknown action: ${String(input.action)}`)
       }

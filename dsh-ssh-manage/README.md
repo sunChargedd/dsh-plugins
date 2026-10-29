@@ -24,7 +24,7 @@
 
 - **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
-- **日常运维**：批量命令、SFTP 目录浏览 / 上传 / 下载、测试连接；
+- **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载、测试连接；
 - **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`，也不返回给浏览器；
 - **Agent 工具**：`ssh_manager` 把同一套能力开放给模型。
 
@@ -53,7 +53,7 @@
 ### 批量命令与文件
 
 - **批量命令**：勾选多台主机，一次执行同一条命令，按主机汇总 stdout / stderr / 退出码。
-- **SFTP**：在主机抽屉里浏览远程目录、上传、下载；默认从当前用户主目录开始。
+- **SFTP**：在主机抽屉里浏览远程目录，新建文件夹、重命名、删除文件/空目录、上传、下载；会记住每台主机上次所在目录。
 - **测试连接**：记录连接延迟，结果写回主机信息。
 - **主机巡检**：读取发行版、CPU 核心数、内存、磁盘容量。
 
@@ -70,7 +70,7 @@
 
 `ssh_manager` 工具开放以下动作，和页面走同一套 Host 逻辑：
 
-`overview`、`list_hosts`、`save_host`、`delete_host`、`set_metadata`、`save_password`、`delete_password`、`test_connection`、`inspect_host`、`exec`、`batch_exec`、`sftp_list`、`sftp_upload`、`sftp_download`。
+`overview`、`list_hosts`、`save_host`、`delete_host`、`set_metadata`、`save_password`、`delete_password`、`test_connection`、`inspect_host`、`exec`、`batch_exec`、`sftp_list`、`sftp_upload`、`sftp_download`、`sftp_mkdir`、`sftp_rename`、`sftp_delete`。
 
 密码字段是 write-only，任何返回值都不包含密码明文。
 
@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.1`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.2`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.1
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.2
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.1
+dsh plugin add dsh-ssh-manage@0.3.2
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -139,7 +139,7 @@ plugin_manager action=install_bundle target=<仓库绝对路径>/dsh-ssh-manage
 
 | | 要求 |
 | --- | --- |
-| **DSH** | **`>=0.2.1-rc.3 <0.3.1`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.0`**（实机验证版本：DSH Desktop `0.2.1-rc.3`） |
 | **Node.js** | `>=20`（跟随 DSH 内置运行时） |
 | **平台** | 实机验证 macOS；测试套件只依赖 Node 内置模块，可跨平台运行 |
 | **网络** | 需要能访问目标 SSH 主机的 22 端口（或配置的端口） |
@@ -224,6 +224,7 @@ npm test
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。
+- **SFTP 重命名/删除**：重命名默认拒绝覆盖已存在的目标（`sftp_rename` 工具可显式传 `overwrite: true`）；删除目录要求目录为空，根路径、`.`/`..` 和盘符根会被拒绝；符号链接按链接本身删除，不会跟随到目标。
 - **xterm 资源**：首次打开会加载约 500 KB 的 xterm.js 基础资源；搜索组件按需加载，总计约 556 KiB（本地同源，不访问 CDN）。
 
 ## 参与贡献

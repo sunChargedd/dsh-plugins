@@ -6,7 +6,7 @@ import path from 'node:path'
 import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPaths } from '../lib/ssh-config.js'
 import { getPassword, hasPassword, listPasswordAliases, removePassword, setPassword } from '../lib/vault.js'
 import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
-import { __test as sshTest, execCommand } from '../lib/ssh-client.js'
+import { __test as sshTest, deleteRemotePath, execCommand, makeRemoteDirectory, renameRemotePath } from '../lib/ssh-client.js'
 import { knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
 import { __test as indexTest } from '../index.js'
 
@@ -356,7 +356,20 @@ try {
   assert.equal(normalizeEntry('demo', { cpuCores: -4, memoryGB: '-1' }).cpuCores, 0)
   assert.equal(normalizeEntry('demo', { cpuCores: -4, memoryGB: '-1' }).memoryGB, 0)
   assert.equal(normalizeEntry('demo', { cpuCores: 'not-a-number' }).cpuCores, 0)
-  console.log('ok - host metadata normalizes info fields, caps and drops unknown keys')
+  // SFTP destructive operations reject root/empty paths and no-op renames before connecting.
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', '/'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', '..'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', '///'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', '/.'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', '../..'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', 'C:'), /Refusing to delete/)
+await assert.rejects(() => deleteRemotePath({ host: 'missing' }, '', 'C:.'), /Refusing to delete/)
+await assert.rejects(() => renameRemotePath({ host: 'missing' }, '', '/srv/a', '/srv/a'), /same/)
+await assert.rejects(() => renameRemotePath({ host: 'missing' }, '', '/srv/a', '/srv/a/'), /same/)
+await assert.rejects(() => makeRemoteDirectory({ host: 'missing' }, '', ''), /Remote path is required/)
+console.log('ok - SFTP mkdir/rename/delete guard root and empty paths before connecting')
+
+console.log('ok - host metadata normalizes info fields, caps and drops unknown keys')
 
   const passwordlessPaths = {
     configPath: path.join(temp, '.passwordless', 'config'),
@@ -407,6 +420,11 @@ try {
 
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
+  assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))
+  assert.ok(tool.parameters.properties.action.enum.includes('sftp_rename'))
+  assert.ok(tool.parameters.properties.action.enum.includes('sftp_delete'))
+  assert.equal(tool.parameters.properties.newPath.type, 'string')
+  assert.equal(tool.parameters.properties.overwrite.type, 'boolean')
   const metadataViaObject = await tool.execute({ action: 'set_metadata', host: { host: 'renamed' }, metadata: { note: 'from tool' } })
   assert.equal(metadataViaObject.metadata.note, 'from tool')
   assert.equal(metadataViaObject.state.hosts[0].note, 'from tool')

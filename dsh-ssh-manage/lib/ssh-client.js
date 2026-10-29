@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { Client } from 'ssh2'
 import { verifyHostKey } from './known-hosts.js'
 
@@ -105,6 +106,21 @@ function safeRemotePath(value) {
   return value
 }
 
+/** POSIX-normalize a remote path; used only for guards and comparisons. */
+export function normalizeRemotePath(value) {
+  const raw = safeRemotePath(value)
+  const normalized = path.posix.normalize(raw)
+  return normalized.length > 1 ? normalized.replace(/\/+$/, '') : normalized
+}
+
+function isProtectedRemotePath(value) {
+  const normalized = normalizeRemotePath(value)
+  if (normalized === '' || normalized === '/' || normalized === '.' || normalized === '..') return true
+  if (normalized.startsWith('../') || normalized.includes('/../') || normalized.endsWith('/..') || normalized.includes('/./')) return true
+  if (/^[A-Za-z]:(?:\.{1,2})?$/.test(normalized)) return true
+  return false
+}
+
 function probeInteger(value) {
   const numeric = Number(String(value ?? '').trim())
   if (!Number.isFinite(numeric)) return 0
@@ -170,7 +186,13 @@ export async function listRemoteFiles(host, password, remotePath = '.') {
         if (error) return reject(error)
         sftp.readdir(target, (readError, entries) => {
           if (readError) return reject(readError)
-          resolve(entries.map((entry) => ({ name: entry.filename, size: entry.attrs?.size ?? 0, mode: entry.attrs?.mode ?? 0, directory: Boolean(entry.attrs?.isDirectory?.()) })))
+          resolve(entries.map((entry) => ({
+            name: entry.filename,
+            size: entry.attrs?.size ?? 0,
+            mode: entry.attrs?.mode ?? 0,
+            directory: Boolean(entry.attrs?.isDirectory?.()),
+            symlink: Boolean(entry.attrs?.isSymbolicLink?.()),
+          })))
         })
       })
     })
@@ -206,6 +228,69 @@ export async function downloadFile(host, password, remotePath) {
     }))
     return { bytes: content.length, contentBase64: content.toString('base64') }
   } finally { client.end() }
+}
+
+async function withSftp(host, password, operation) {
+  const client = await connect(host, password)
+  try {
+    const sftp = await new Promise((resolve, reject) => client.sftp((error, value) => error ? reject(error) : resolve(value)))
+    return await operation(sftp)
+  } finally {
+    client.end()
+  }
+}
+
+export async function makeRemoteDirectory(host, password, remotePath) {
+  const target = safeRemotePath(remotePath)
+  await withSftp(host, password, (sftp) => new Promise((resolve, reject) => {
+    sftp.mkdir(target, (error) => error ? reject(error) : resolve())
+  }))
+  return { created: true, path: target }
+}
+
+export async function renameRemotePath(host, password, remotePath, nextPath, options = {}) {
+  const from = safeRemotePath(remotePath)
+  const to = safeRemotePath(nextPath)
+  if (normalizeRemotePath(from) === normalizeRemotePath(to)) throw new Error('Source and destination are the same')
+  if (isProtectedRemotePath(to)) throw new Error('Refusing to rename onto a root path')
+  await withSftp(host, password, async (sftp) => {
+    if (options.overwrite !== true) {
+      const exists = await new Promise((resolve, reject) => {
+        sftp.stat(to, (error) => {
+          if (error) {
+            if (error.code === 2) resolve(false)
+            else reject(error)
+          } else resolve(true)
+        })
+      })
+      if (exists) throw new Error(`Destination already exists: ${to}`)
+    }
+    await new Promise((resolve, reject) => {
+      sftp.rename(from, to, (error) => error ? reject(error) : resolve())
+    })
+  })
+  return { renamed: true, from, to }
+}
+
+export async function deleteRemotePath(host, password, remotePath) {
+  const target = safeRemotePath(remotePath)
+  if (isProtectedRemotePath(target)) {
+    throw new Error('Refusing to delete a root or empty path')
+  }
+  const result = await withSftp(host, password, async (sftp) => {
+    const stats = await new Promise((resolve, reject) => {
+      sftp.lstat(target, (error, value) => error ? reject(error) : resolve(value))
+    })
+    const symbolicLink = Boolean(stats?.isSymbolicLink?.())
+    const directory = !symbolicLink && Boolean(stats?.isDirectory?.())
+    await new Promise((resolve, reject) => {
+      const done = (error) => error ? reject(error) : resolve()
+      if (directory) sftp.rmdir(target, done)
+      else sftp.unlink(target, done)
+    })
+    return { directory, symbolicLink }
+  })
+  return { deleted: true, directory: result.directory, symbolicLink: result.symbolicLink, path: target }
 }
 
 export async function batchExec(hosts, passwordFor, command, options = {}) {
@@ -270,4 +355,4 @@ export function openInteractiveShell(host, password, onReady, options = {}) {
   })
 }
 
-export const __test = { safeRemotePath, connectionConfig, parseProbeOutput, MAX_OUTPUT_BYTES, MAX_FILE_BYTES }
+export const __test = { safeRemotePath, normalizeRemotePath, isProtectedRemotePath, connectionConfig, parseProbeOutput, MAX_OUTPUT_BYTES, MAX_FILE_BYTES }

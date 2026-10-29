@@ -182,6 +182,19 @@ window.__ModuleLoader__.load({
       'drawer.files.path': ['远程路径', 'Remote path'],
       'drawer.files.up': ['上级目录', 'Parent directory'],
       'drawer.files.empty': ['目录暂无内容。', 'This directory is empty.'],
+      'drawer.files.mkdir': ['新建文件夹', 'New folder'],
+      'drawer.files.mkdirTitle': ['新建文件夹', 'New folder'],
+      'drawer.files.rename': ['重命名', 'Rename'],
+      'drawer.files.renameTitle': ['重命名', 'Rename'],
+      'drawer.files.delete': ['删除', 'Delete'],
+      'drawer.files.deleteTitle': ['删除', 'Delete'],
+      'drawer.files.deleteConfirm': ['确定删除“{name}”？删除目录时要求目录为空。', 'Delete "{name}"? Directories must be empty.'],
+      'drawer.files.name': ['名称', 'Name'],
+      'drawer.files.invalidName': ['名称不能为空，也不能包含 / 或 \\。', 'Name must be non-empty and cannot contain / or \\.'],
+      'drawer.files.created': ['文件夹已创建', 'Folder created'],
+      'drawer.files.renamed': ['已重命名', 'Renamed'],
+      'drawer.files.deleted': ['已删除', 'Deleted'],
+      'common.create': ['新建', 'Create'],
       'drawer.files.dir': ['目录', 'dir'],
       'drawer.files.uploading': ['上传中…', 'Uploading…'],
       'drawer.details.connection': ['连接信息', 'Connection'],
@@ -793,7 +806,7 @@ window.__ModuleLoader__.load({
       return h('span', { className: 'ssh-spinner', style: { width: size, height: size } })
     }
 
-    function Button({ children, variant, size, onClick, disabled, title, type = 'button', className, ariaPressed }) {
+    function Button({ children, variant, size, onClick, disabled, title, type = 'button', className, ariaPressed, autoFocus }) {
       return h(
         'button',
         {
@@ -803,6 +816,7 @@ window.__ModuleLoader__.load({
           disabled,
           title,
           'aria-pressed': ariaPressed,
+          autoFocus,
         },
         children,
       )
@@ -4088,25 +4102,50 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const SFTP_PATH_PREFIX = 'dsh-ssh-manage:sftp-path:'
+
+    function readSftpPath(alias) {
+      try {
+        const stored = window.localStorage.getItem(SFTP_PATH_PREFIX + alias)
+        return stored && stored.trim() ? stored : '.'
+      } catch {
+        return '.'
+      }
+    }
+
+    function saveSftpPath(alias, target) {
+      try {
+        window.localStorage.setItem(SFTP_PATH_PREFIX + alias, target)
+      } catch {}
+    }
+
     function FilesView({ model, host }) {
-      const { t, notify, withPending } = model
-      const [path, setPath] = React.useState('.')
+      const { t, notify } = model
+      const [path, setPath] = React.useState(() => readSftpPath(host.host))
       const [entries, setEntries] = React.useState([])
       const [loading, setLoading] = React.useState(true)
       const [error, setError] = React.useState('')
       const [uploading, setUploading] = React.useState(false)
+      const [dialog, setDialog] = React.useState(null)
+      const [dialogValue, setDialogValue] = React.useState('')
+      const [dialogBusy, setDialogBusy] = React.useState(false)
+      const dialogBusyRef = React.useRef(false)
       const fileRef = React.useRef(null)
 
       const loadDirectory = React.useCallback(
-        async (target) => {
+        async (target, options = {}) => {
+          const normalized = String(target ?? '').trim() || '.'
           setLoading(true)
           setError('')
           try {
-            const value = await callAction('sftp/list', { host: host.host, path: target })
+            const value = await callAction('sftp/list', { host: host.host, path: normalized })
             setEntries(value.entries ?? [])
-            setPath(target)
+            setPath(normalized)
+            if (options.remember !== false) saveSftpPath(host.host, normalized)
+            return true
           } catch (failure) {
             setError(errorMessage(failure))
+            return false
           } finally {
             setLoading(false)
           }
@@ -4115,8 +4154,72 @@ window.__ModuleLoader__.load({
       )
 
       React.useEffect(() => {
-        void loadDirectory('.')
-      }, [loadDirectory])
+        let cancelled = false
+        void (async () => {
+          const initial = readSftpPath(host.host)
+          const ok = await loadDirectory(initial)
+          if (!ok && initial !== '.' && !cancelled) await loadDirectory('.', { remember: false })
+        })()
+        return () => { cancelled = true }
+      }, [host.host, loadDirectory])
+
+      React.useEffect(() => {
+        if (!dialog) return undefined
+        const onKey = (event) => {
+          if (event.key === 'Escape' && !dialogBusy) {
+            event.preventDefault()
+            event.stopPropagation()
+            setDialog(null)
+          }
+        }
+        document.addEventListener('keydown', onKey, true)
+        return () => document.removeEventListener('keydown', onKey, true)
+      }, [dialog, dialogBusy])
+
+      const openDialog = (mode, entry = null) => {
+        setDialog({ mode, entry })
+        setDialogValue(mode === 'rename' && entry ? entry.name : '')
+      }
+
+      async function submitDialog() {
+        if (!dialog || dialogBusyRef.current) return
+        dialogBusyRef.current = true
+        const name = dialogValue.trim()
+        if (dialog.mode !== 'delete') {
+          if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+            notify(t('drawer.files.invalidName'), 'error')
+            return
+          }
+        }
+        setDialogBusy(true)
+        try {
+          if (dialog.mode === 'mkdir') {
+            await callAction('sftp/mkdir', { host: host.host, path: remoteJoin(path, name) })
+            notify(t('drawer.files.created'), 'success')
+          } else if (dialog.mode === 'rename') {
+            if (name === dialog.entry.name) {
+              setDialog(null)
+              return
+            }
+            await callAction('sftp/rename', {
+              host: host.host,
+              path: remoteJoin(path, dialog.entry.name),
+              newPath: remoteJoin(path, name),
+            })
+            notify(t('drawer.files.renamed'), 'success')
+          } else if (dialog.mode === 'delete') {
+            await callAction('sftp/delete', { host: host.host, path: remoteJoin(path, dialog.entry.name) })
+            notify(t('drawer.files.deleted'), 'success')
+          }
+          setDialog(null)
+          await loadDirectory(path)
+        } catch (failure) {
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        } finally {
+          dialogBusyRef.current = false
+          setDialogBusy(false)
+        }
+      }
 
       async function downloadEntry(entry) {
         const remote = remoteJoin(path, entry.name)
@@ -4185,6 +4288,12 @@ window.__ModuleLoader__.load({
           ),
           h(
             Button,
+            { size: 'sm', variant: 'ghost', onClick: () => openDialog('mkdir'), disabled: loading || uploading },
+            h(IconPlus, { size: 13 }),
+            t('drawer.files.mkdir'),
+          ),
+          h(
+            Button,
             { size: 'sm', onClick: () => fileRef.current && fileRef.current.click(), disabled: uploading },
             uploading ? h(Spinner, { size: 12 }) : h(IconUpload, { size: 13 }),
             uploading ? t('drawer.files.uploading') : t('common.upload'),
@@ -4193,6 +4302,69 @@ window.__ModuleLoader__.load({
         ),
         error
           ? h('div', { className: 'ssh-fileError' }, h(IconAlert, { size: 13 }), h('span', null, error))
+          : null,
+        dialog
+          ? h(
+              'div',
+              {
+                className: 'ssh-fileDialogScrim',
+                onMouseDown: () => {
+                  if (!dialogBusy) setDialog(null)
+                },
+              },
+              h(
+                'div',
+                {
+                  className: 'ssh-fileDialog',
+                  role: 'dialog',
+                  'aria-modal': 'true',
+                  'aria-label': dialog.mode === 'mkdir'
+                    ? t('drawer.files.mkdirTitle')
+                    : dialog.mode === 'rename'
+                      ? t('drawer.files.renameTitle')
+                      : t('drawer.files.deleteTitle'),
+                  onMouseDown: (event) => event.stopPropagation(),
+                },
+                h(
+                  'div',
+                  { className: 'ssh-fileDialogTitle' },
+                  dialog.mode === 'mkdir'
+                    ? t('drawer.files.mkdirTitle')
+                    : dialog.mode === 'rename'
+                      ? t('drawer.files.renameTitle')
+                      : t('drawer.files.deleteTitle'),
+                ),
+                dialog.mode === 'delete'
+                  ? h('div', { className: 'ssh-fileDialogBody' }, t('drawer.files.deleteConfirm', { name: dialog.entry?.name ?? '' }))
+                  : h(TextInput, {
+                      value: dialogValue,
+                      autoFocus: true,
+                      placeholder: t('drawer.files.name'),
+                      onChange: setDialogValue,
+                      onKeyDown: (event) => {
+                        if (event.key === 'Enter') void submitDialog()
+                        else if (event.key === 'Escape' && !dialogBusy) setDialog(null)
+                      },
+                    }),
+                h(
+                  'div',
+                  { className: 'ssh-fileDialogActions' },
+                  h(Button, { variant: 'ghost', size: 'sm', onClick: () => setDialog(null), disabled: dialogBusy }, t('common.cancel')),
+                  h(
+                    Button,
+                    {
+                      variant: dialog.mode === 'delete' ? 'dangerSolid' : 'primary',
+                      size: 'sm',
+                      autoFocus: dialog.mode === 'delete',
+                      onClick: () => void submitDialog(),
+                      disabled: dialogBusy,
+                    },
+                    dialogBusy ? h(Spinner, { size: 12 }) : null,
+                    dialog.mode === 'delete' ? t('common.delete') : t('common.create'),
+                  ),
+                ),
+              ),
+            )
           : null,
         h(
           'div',
@@ -4220,13 +4392,27 @@ window.__ModuleLoader__.load({
                       entry.name,
                     ),
                     h('span', { className: 'ssh-fileSize' }, entry.directory ? t('drawer.files.dir') : formatBytes(entry.size)),
-                    entry.directory
-                      ? h('span', null)
-                      : h(
-                          IconButton,
-                          { title: t('common.download'), onClick: () => void downloadEntry(entry) },
-                          h(IconDownload, { size: 14 }),
-                        ),
+                    h(
+                      'div',
+                      { className: 'ssh-fileActions' },
+                      entry.directory
+                        ? null
+                        : h(
+                            IconButton,
+                            { title: t('common.download'), onClick: () => void downloadEntry(entry) },
+                            h(IconDownload, { size: 14 }),
+                          ),
+                      h(
+                        IconButton,
+                        { title: t('drawer.files.rename'), onClick: () => openDialog('rename', entry) },
+                        h(IconEdit, { size: 14 }),
+                      ),
+                      h(
+                        IconButton,
+                        { title: t('drawer.files.delete'), onClick: () => openDialog('delete', entry) },
+                        h(IconTrash, { size: 14 }),
+                      ),
+                    ),
                   ),
                 ),
         ),
@@ -5333,7 +5519,13 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-filesPath{flex:1;min-width:140px}
 .ssh-fileError{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ssh-danger)}
 .ssh-fileList{flex:1;min-height:0;overflow:auto;border:.5px solid var(--ssh-border);border-radius:var(--ssh-radius-md)}
-.ssh-fileRow{display:grid;grid-template-columns:22px minmax(0,1fr) 90px 28px;align-items:center;gap:8px;padding:0 10px;height:34px;border-bottom:.5px solid var(--ssh-border);font-size:12px}
+.ssh-fileRow{display:grid;grid-template-columns:22px minmax(0,1fr) 90px auto;align-items:center;gap:8px;padding:0 10px;height:34px;border-bottom:.5px solid var(--ssh-border);font-size:12px}
+.ssh-fileActions{display:flex;align-items:center;gap:2px}
+.ssh-fileDialogScrim{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--dsw-alias-bg-mask-1,color-mix(in srgb,var(--ssh-text) 18%,transparent))}
+.ssh-fileDialog{width:min(360px,100%);padding:14px;border:.5px solid var(--ssh-border-strong);border-radius:12px;background:var(--ssh-layer-1);box-shadow:var(--ssh-shadow);display:flex;flex-direction:column;gap:10px}
+.ssh-fileDialogTitle{font-size:13px;font-weight:600;color:var(--ssh-text)}
+.ssh-fileDialogBody{font-size:12px;line-height:1.5;color:var(--ssh-text-2)}
+.ssh-fileDialogActions{display:flex;justify-content:flex-end;gap:8px}
 .ssh-fileRow:last-child{border-bottom:none}
 .ssh-fileRow:hover{background:var(--ssh-hover)}
 .ssh-fileIcon{display:inline-flex;color:var(--ssh-text-3)}

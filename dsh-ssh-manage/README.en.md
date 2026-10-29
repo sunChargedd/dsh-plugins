@@ -24,7 +24,7 @@
 
 - **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
-- **Day-to-day operations** — batch commands, SFTP browse/upload/download, connection tests;
+- **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download, connection tests;
 - **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config` and never returned to the browser;
 - **Agent tool** — `ssh_manager` exposes the same capabilities to the model.
 
@@ -53,7 +53,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 ### Batch commands and files
 
 - **Batch commands** — select hosts and run one command across them, with per-host stdout/stderr/exit code.
-- **SFTP** — browse remote directories, upload and download from the host drawer, starting at the current user's home directory.
+- **SFTP** — browse remote directories from the host drawer, create folders, rename, delete files/empty directories, upload and download; the last directory per host is remembered.
 - **Connection test** — measures latency and writes it back to host metadata.
 - **Host inspection** — distro, CPU cores, memory and disk capacity.
 
@@ -68,7 +68,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 
 ### Agent tool
 
-`ssh_manager` exposes: `overview`, `list_hosts`, `save_host`, `delete_host`, `set_metadata`, `save_password`, `delete_password`, `test_connection`, `inspect_host`, `exec`, `batch_exec`, `sftp_list`, `sftp_upload`, `sftp_download`.
+`ssh_manager` exposes: `overview`, `list_hosts`, `save_host`, `delete_host`, `set_metadata`, `save_password`, `delete_password`, `test_connection`, `inspect_host`, `exec`, `batch_exec`, `sftp_list`, `sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`.
 
 The password parameter is write-only; no response contains a plaintext password.
 
@@ -96,16 +96,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.1`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.2`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.1
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.2
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.1
+dsh plugin add dsh-ssh-manage@0.3.2
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -137,7 +137,7 @@ and make sure the package is resolvable by the profile (for example `link:` to t
 
 | | Requirement |
 | --- | --- |
-| **DSH** | **`>=0.2.1-rc.3 <0.3.1`** (validated on DSH Desktop `0.2.1-rc.3`) |
+| **DSH** | **`>=0.2.1-rc.3 <0.3.0`** (validated on DSH Desktop `0.2.1-rc.3`) |
 | **Node.js** | `>=20` (follows the DSH runtime) |
 | **Platform** | Validated on macOS; the test suite only uses Node built-ins and runs cross-platform |
 | **Network** | Reachable SSH port (22 by default, or the configured port) |
@@ -221,6 +221,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xt
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.
+- **SFTP rename/delete**: rename refuses to overwrite an existing destination by default (`sftp_rename` can pass `overwrite: true` explicitly); deleting a directory requires it to be empty, and root paths, `.`/`..` and drive roots are refused; symlinks are removed as links, not followed.
 - **xterm assets**: the first terminal open loads about 500 KB of xterm.js basics; the search addon loads on demand, about 556 KiB total from the same origin (no CDN).
 
 ## Contributing
