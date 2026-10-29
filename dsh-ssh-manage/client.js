@@ -223,6 +223,8 @@ window.__ModuleLoader__.load({
       'drawer.files.overwrite': ['远程已存在“{name}”，确定覆盖？', 'Remote "{name}" already exists. Overwrite?'],
       'drawer.files.transferRunning': ['传输中', 'Running'],
       'drawer.files.transferDone': ['完成', 'Done'],
+      'drawer.files.transferCancelled': ['已取消', 'Cancelled'],
+      'drawer.files.transferCancel': ['取消传输', 'Cancel transfer'],
       'common.create': ['新建', 'Create'],
       'drawer.files.dir': ['目录', 'dir'],
       'drawer.files.uploading': ['上传中…', 'Uploading…'],
@@ -529,6 +531,40 @@ window.__ModuleLoader__.load({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ action, ...(params ?? {}) }),
+      })
+    }
+
+    function callActionWithProgress(action, params, options = {}) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', ACTION_ROUTE)
+        xhr.setRequestHeader('content-type', 'application/json')
+        xhr.responseType = 'text'
+        const signal = options.signal
+        const abort = () => xhr.abort()
+        if (signal) {
+          if (signal.aborted) { abort(); return }
+          signal.addEventListener('abort', abort, { once: true })
+        }
+        const report = (event, upload) => {
+          if (!options.onProgress) return
+          const total = Number(event.total || (upload ? event.target?.upload?.total : 0))
+          options.onProgress(event.lengthComputable && total > 0 ? Math.min(1, event.loaded / total) : null)
+        }
+        xhr.upload.onprogress = (event) => report(event, true)
+        xhr.onprogress = (event) => report(event, false)
+        xhr.onload = () => {
+          try {
+            const payload = xhr.responseText ? JSON.parse(xhr.responseText) : undefined
+            if (payload?.ok === true) resolve(payload.value)
+            else reject(new Error(payload?.error?.message ?? `HTTP ${xhr.status}`))
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error(String(error)))
+          }
+        }
+        xhr.onerror = () => reject(new Error('Network request failed'))
+        xhr.onabort = () => reject(new Error('Transfer cancelled'))
+        xhr.send(JSON.stringify({ action, ...(params ?? {}) }))
       })
     }
 
@@ -4309,6 +4345,7 @@ window.__ModuleLoader__.load({
       const [editor, setEditor] = React.useState(null)
       const [editorBusy, setEditorBusy] = React.useState(false)
       const [transfers, setTransfers] = React.useState([])
+      const transferControllers = React.useRef(new Map())
       const dialogBusyRef = React.useRef(false)
       const fileRef = React.useRef(null)
 
@@ -4419,8 +4456,22 @@ window.__ModuleLoader__.load({
         setTransfers((prev) => [...prev.slice(-4), { id, name, kind, status: 'running', error: '' }])
         return id
       }
+      const updateTransfer = (id, patch) => {
+        setTransfers((prev) => prev.map((item) => item.id === id ? { ...item, ...patch } : item))
+      }
       const finishTransfer = (id, error = '') => {
-        setTransfers((prev) => prev.map((item) => item.id === id ? { ...item, status: error ? 'error' : 'done', error } : item))
+        transferControllers.current.delete(id)
+        updateTransfer(id, { status: error ? (error === 'cancelled' ? 'cancelled' : 'error') : 'done', error, progress: error ? 0 : 1 })
+      }
+      const cancelTransfer = (id) => {
+        const controller = transferControllers.current.get(id)
+        if (controller) controller.abort()
+        else finishTransfer(id, 'cancelled')
+      }
+      const startTransfer = (id) => {
+        const controller = new AbortController()
+        transferControllers.current.set(id, controller)
+        return controller
       }
 
       async function openRemoteEditor(entry) {
@@ -4474,20 +4525,18 @@ window.__ModuleLoader__.load({
       async function downloadEntry(entry) {
         const remote = remoteJoin(path, entry.name)
         const id = queueTransfer(entry.name, 'download')
+        const controller = startTransfer(id)
         try {
-          const value = await withPending(`download:${remote}`, () =>
-            callAction('sftp/download', { host: host.host, path: remote }),
-          )
-          if (!value) {
-            finishTransfer(id, 'cancelled')
-            return
-          }
+          const value = await callActionWithProgress('sftp/download', { host: host.host, path: remote }, {
+            signal: controller.signal,
+            onProgress: (progress) => updateTransfer(id, { progress }),
+          })
           downloadBase64(entry.name, value.contentBase64)
           notify(t('state.downloaded'), 'success')
           finishTransfer(id)
         } catch (failure) {
-          finishTransfer(id, errorMessage(failure))
-          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+          finishTransfer(id, controller.signal.aborted ? 'cancelled' : errorMessage(failure))
+          if (!controller.signal.aborted) notify(t('state.error', { message: errorMessage(failure) }), 'error')
         }
       }
 
@@ -4508,18 +4557,22 @@ window.__ModuleLoader__.load({
               if (!overwrite) continue
             }
             const id = queueTransfer(file.name, 'upload')
+            const controller = startTransfer(id)
             try {
               const contentBase64 = await readFileBase64(file)
-              await callAction('sftp/upload', {
+              await callActionWithProgress('sftp/upload', {
                 host: host.host,
                 path: remoteJoin(path, file.name),
                 contentBase64,
+              }, {
+                signal: controller.signal,
+                onProgress: (progress) => updateTransfer(id, { progress }),
               })
               notify(t('state.uploaded'), 'success')
               finishTransfer(id)
             } catch (failure) {
-              finishTransfer(id, errorMessage(failure))
-              notify(t('state.error', { message: errorMessage(failure) }), 'error')
+              finishTransfer(id, controller.signal.aborted ? 'cancelled' : errorMessage(failure))
+              if (!controller.signal.aborted) notify(t('state.error', { message: errorMessage(failure) }), 'error')
             }
           }
           await loadDirectory(path)
@@ -4582,7 +4635,24 @@ window.__ModuleLoader__.load({
                   { key: item.id, className: cx('ssh-transferRow', item.status) },
                   h('span', { className: 'ssh-transferName', title: item.name }, item.name),
                   h('span', { className: 'ssh-transferKind' }, item.kind),
-                  h('span', { className: 'ssh-transferStatus' }, item.status === 'running' ? t('drawer.files.transferRunning') : item.status === 'done' ? t('drawer.files.transferDone') : item.status),
+                  h(
+                    'span',
+                    { className: 'ssh-transferProgress' },
+                    item.status === 'running'
+                      ? h('span', { className: 'ssh-transferBar' }, h('span', { style: { width: `${Math.round((item.progress ?? 0) * 100)}%` } }))
+                      : null,
+                  ),
+                  h('span', { className: 'ssh-transferStatus' },
+                    item.status === 'running'
+                      ? `${Math.round((item.progress ?? 0) * 100)}%`
+                      : item.status === 'done'
+                        ? t('drawer.files.transferDone')
+                        : item.status === 'cancelled'
+                          ? t('drawer.files.transferCancelled')
+                          : item.status),
+                  item.status === 'running'
+                    ? h(IconButton, { title: t('drawer.files.transferCancel'), onClick: () => cancelTransfer(item.id) }, h(IconClose, { size: 12 }))
+                    : null,
                 ),
               ),
             )
@@ -6575,7 +6645,9 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-remoteEditor{width:min(760px,100%)}
 .ssh-remoteEditor .ssh-textarea{min-height:340px;max-height:58vh;font-size:12px;line-height:1.5}
 .ssh-transferList{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
-.ssh-transferRow{display:grid;grid-template-columns:minmax(0,1fr) 60px 70px;gap:8px;align-items:center;padding:4px 8px;border-radius:6px;background:var(--ssh-layer-2);font-size:11px;color:var(--ssh-text-2)}
+.ssh-transferRow{display:grid;grid-template-columns:minmax(0,1fr) 54px 90px 56px 22px;gap:6px;align-items:center;padding:4px 8px;border-radius:6px;background:var(--ssh-layer-2);font-size:11px;color:var(--ssh-text-2)}
+.ssh-transferProgress{display:block;height:4px;border-radius:2px;background:var(--ssh-layer-3);overflow:hidden}
+.ssh-transferBar{display:block;height:100%;background:var(--ssh-success);transition:width .15s ease}
 .ssh-transferRow.error{color:var(--ssh-danger)}
 .ssh-transferName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ssh-transferKind{font-size:10px;color:var(--ssh-text-3);text-transform:uppercase}

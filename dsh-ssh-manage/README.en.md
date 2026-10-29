@@ -28,7 +28,7 @@
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
 - **Port forwarding** — start local `127.0.0.1:local → remote host:port` tunnels or a local SOCKS5 proxy from host details, with ProxyJump/key auth, closed automatically when the plugin unloads;
-- **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download/remote text editing, transfer queue and overwrite confirmation, connection tests;
+- **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download/remote text editing, transfer queue with real upload progress and cancel, overwrite confirmation, connection tests;
 - **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config`; passwords are not returned to the browser by default, but Show password decrypts one on demand in the current page and auto-hides it after 30 seconds;
 - **Agent tool** — `ssh_manager` exposes the same capabilities to the model.
 
@@ -100,16 +100,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.22`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.23`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.22
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.23
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.22
+dsh plugin add dsh-ssh-manage@0.3.23
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.

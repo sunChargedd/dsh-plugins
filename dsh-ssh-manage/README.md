@@ -28,7 +28,7 @@
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **备份迁移**：设置页可导出/导入主机、分组、标签、备注、收藏和密码；导出文件用自定义口令二次加密（scrypt + AES-256-GCM），导入按别名合并；
 - **端口转发**：主机详情启动 `127.0.0.1:本地端口 → 远程主机:端口` 本地转发或本地 SOCKS5 代理，支持 ProxyJump/密钥，插件卸载时自动关闭；
-- **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载 / 远程文本编辑、传输队列与覆盖确认、测试连接；
+- **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载 / 远程文本编辑、传输队列与覆盖确认、真实上传进度与取消、测试连接；
 - **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`；默认不返回浏览器，在主机详情点“显示密码”时才按需解密到当前页面，30 秒后自动隐藏；
 - **Agent 工具**：`ssh_manager` 把同一套能力开放给模型。
 
@@ -102,16 +102,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.22`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.23`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.22
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.23
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.22
+dsh plugin add dsh-ssh-manage@0.3.23
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
