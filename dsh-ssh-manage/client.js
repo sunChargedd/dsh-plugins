@@ -209,7 +209,13 @@ window.__ModuleLoader__.load({
       'drawer.details.password': ['密码', 'Password'],
       'drawer.details.savePassword': ['保存密码', 'Save password'],
       'drawer.details.clearPassword': ['清除密码', 'Clear password'],
-      'drawer.details.passwordHint': ['密码使用 AES-256-GCM 加密保存在本机，不会回传到浏览器。', 'Passwords are AES-256-GCM encrypted on this machine and never returned to the browser.'],
+      'drawer.details.passwordHint': ['密码使用 AES-256-GCM 加密保存在本机；点击“显示密码”可在当前页面临时明文查看，30 秒后自动隐藏。', 'Passwords are AES-256-GCM encrypted at rest; use Show password to reveal one temporarily on this page (auto-hides after 30 seconds).'],
+      'drawer.details.reveal': ['显示密码', 'Show password'],
+      'drawer.details.hide': ['隐藏密码', 'Hide password'],
+      'drawer.details.copyPassword': ['复制密码', 'Copy password'],
+      'drawer.details.passwordCopied': ['密码已复制', 'Password copied'],
+      'drawer.details.revealWarning': ['密码已明文显示；注意旁人、录屏和截图，30 秒后自动隐藏。', 'The password is visible in plain text; watch for onlookers, screen recording and screenshots. It hides after 30 seconds.'],
+      'drawer.details.revealFailed': ['无法显示密码：{message}', 'Could not reveal the password: {message}'],
       'drawer.details.system': ['主机信息', 'System'],
       'drawer.details.detect': ['检测信息', 'Detect'],
       'drawer.details.detecting': ['检测中…', 'Detecting…'],
@@ -780,6 +786,25 @@ window.__ModuleLoader__.load({
         h('rect', { x: 5, y: 10.2, width: 14, height: 9.6, rx: 2, stroke: 'currentColor', strokeWidth: 1.5 }),
         h(P, { d: 'M8.2 10.2V7.4a3.8 3.8 0 0 1 7.6 0v2.8' }),
         h('circle', { cx: 12, cy: 15, r: 1.1, fill: 'currentColor', stroke: 'none' }),
+      )
+    }
+
+    function IconEye({ size = 14 }) {
+      return h(
+        Svg,
+        { size },
+        h(P, { d: 'M2.5 12s3.6-6.2 9.5-6.2S21.5 12 21.5 12s-3.6 6.2-9.5 6.2S2.5 12 2.5 12Z' }),
+        h('circle', { cx: 12, cy: 12, r: 3, stroke: 'currentColor', strokeWidth: 1.5 }),
+      )
+    }
+
+    function IconEyeOff({ size = 14 }) {
+      return h(
+        Svg,
+        { size },
+        h(P, { d: 'M3 3l18 18' }),
+        h(P, { d: 'M10.6 6.1A10.7 10.7 0 0 1 12 6c5.9 0 9.5 6 9.5 6a17 17 0 0 1-3.1 3.6M6.4 6.8C3.9 8.7 2.5 12 2.5 12s3.6 6 9.5 6a10.9 10.9 0 0 0 4.5-1' }),
+        h(P, { d: 'M9.9 9.9a3 3 0 0 0 4.2 4.2' }),
       )
     }
 
@@ -4432,20 +4457,71 @@ window.__ModuleLoader__.load({
     }
 
     function DetailsView({ model, host, onEdit, onDelete }) {
-      const { t, localeId, isPending, testHost, inspectHost, savePassword, removePassword } = model
+      const { t, notify, localeId, isPending, testHost, inspectHost, savePassword, removePassword } = model
       const [password, setPassword] = React.useState('')
       const [saving, setSaving] = React.useState(false)
+      const [revealedPassword, setRevealedPassword] = React.useState('')
+      const [revealing, setRevealing] = React.useState(false)
+      const revealTimer = React.useRef(null)
       const credential = credentialInfo(host, t)
       const testing = isPending(`test:${host.host}`)
       const inspecting = isPending(`inspect:${host.host}`)
       const hasSystem = Boolean(host.system || host.cpuCores || host.memoryGB || host.diskGB || host.latencyMs)
+
+      const hideRevealed = () => {
+        if (revealTimer.current) {
+          clearTimeout(revealTimer.current)
+          revealTimer.current = null
+        }
+        setRevealedPassword('')
+      }
+
+      React.useEffect(() => {
+        hideRevealed()
+        return () => {
+          if (revealTimer.current) clearTimeout(revealTimer.current)
+        }
+      }, [host.host])
+
+      async function toggleReveal() {
+        if (revealedPassword) {
+          hideRevealed()
+          return
+        }
+        if (revealing || host.passwordConfigured !== true) return
+        setRevealing(true)
+        try {
+          const value = await callAction('credential/reveal', { host: host.host })
+          const revealed = String(value?.password ?? '')
+          if (!revealed) return
+          setRevealedPassword(revealed)
+          if (revealTimer.current) clearTimeout(revealTimer.current)
+          revealTimer.current = setTimeout(() => {
+            revealTimer.current = null
+            setRevealedPassword('')
+          }, 30_000)
+        } catch (failure) {
+          notify(t('drawer.details.revealFailed', { message: errorMessage(failure) }), 'error')
+        } finally {
+          setRevealing(false)
+        }
+      }
+
+      async function copyRevealed() {
+        if (!revealedPassword) return
+        const copied = await copyTextToClipboard(revealedPassword)
+        notify(copied ? t('drawer.details.passwordCopied') : t('drawer.details.revealFailed', { message: t('terminal.copyFailed') }), copied ? 'success' : 'error')
+      }
 
       async function submitPassword() {
         if (!password || saving) return
         setSaving(true)
         const ok = await savePassword(host, password)
         setSaving(false)
-        if (ok) setPassword('')
+        if (ok) {
+          setPassword('')
+          hideRevealed()
+        }
       }
 
       return h(
@@ -4489,6 +4565,30 @@ window.__ModuleLoader__.load({
           ),
           h(
             'div',
+            { className: 'ssh-credentialReveal' },
+            h(
+              Button,
+              {
+                size: 'sm',
+                variant: 'ghost',
+                onClick: () => void toggleReveal(),
+                disabled: revealing || (!host.passwordConfigured && !revealedPassword),
+              },
+              revealing ? h(Spinner, { size: 12 }) : revealedPassword ? h(IconEyeOff, { size: 13 }) : h(IconEye, { size: 13 }),
+              revealedPassword ? t('drawer.details.hide') : t('drawer.details.reveal'),
+            ),
+            revealedPassword
+              ? h('code', { className: 'ssh-revealValue' }, revealedPassword)
+              : null,
+            revealedPassword
+              ? h(IconButton, { title: t('drawer.details.copyPassword'), onClick: () => void copyRevealed() }, h(IconCopy, { size: 14 }))
+              : null,
+          ),
+          revealedPassword
+            ? h('div', { className: 'ssh-sectionHint ssh-revealWarning' }, h(IconEye, { size: 12 }), h('span', null, t('drawer.details.revealWarning')))
+            : null,
+          h(
+            'div',
             { className: 'ssh-credentialRow' },
             h(TextInput, {
               type: 'password',
@@ -4508,7 +4608,7 @@ window.__ModuleLoader__.load({
             host.passwordConfigured
               ? h(
                   Button,
-                  { size: 'sm', variant: 'dangerGhost', onClick: () => void removePassword(host) },
+                  { size: 'sm', variant: 'dangerGhost', onClick: () => { hideRevealed(); void removePassword(host) } },
                   t('drawer.details.clearPassword'),
                 )
               : null,
@@ -5627,6 +5727,9 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-kvValue{color:var(--ssh-text-2);min-width:0;word-break:break-word}
 .ssh-kvValue.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .ssh-sectionHint{font-size:11.5px;color:var(--ssh-text-3);line-height:1.65}
+.ssh-credentialReveal{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+.ssh-revealValue{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;padding:5px 8px;border:.5px solid var(--ssh-border-strong);border-radius:6px;background:var(--ssh-layer-3);color:var(--ssh-text);word-break:break-all;user-select:all}
+.ssh-revealWarning{display:flex;align-items:flex-start;gap:5px;color:var(--ssh-warn)}
 .ssh-tags{display:flex;gap:5px;flex-wrap:wrap}
 .ssh-detailsActions{display:flex;gap:8px;padding-top:2px}
 .ssh-credentialRow{display:flex;align-items:center;gap:6px}

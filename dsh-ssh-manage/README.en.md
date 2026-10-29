@@ -25,7 +25,7 @@
 - **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download, connection tests;
-- **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config` and never returned to the browser;
+- **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config`; passwords are not returned to the browser by default, but Show password decrypts one on demand in the current page and auto-hides it after 30 seconds;
 - **Agent tool** — `ssh_manager` exposes the same capabilities to the model.
 
 No more jumping between a terminal and DSH, and no need to remember where each host lives in the config file.
@@ -60,7 +60,7 @@ No more jumping between a terminal and DSH, and no need to remember where each h
 ### Credentials and data
 
 - Passwords are AES-256-GCM encrypted in the plugin state directory and unlocked automatically at startup; no master password, no system Keychain.
-- Passwords are only used for SSH password authentication (also compatible with hosts that only offer keyboard-interactive). They are never written to `~/.ssh/config`, command arguments, logs or responses.
+- Passwords are only used for SSH password authentication (also compatible with hosts that only offer keyboard-interactive). They are never written to `~/.ssh/config`, command arguments or logs. They are not returned by default; Show password explicitly decrypts one into the current page for 30 seconds and it is never exposed through the Agent tool.
 - Ciphertext and key live in the same user directory, so this mainly protects against accidental file reads, not against malicious processes running as the same user.
 - Groups, tags, favorites, notes and inspection data live in `hosts.json`; passwords live in `vault.json`; configuration changes are snapshotted to the backup directory.
 
@@ -96,16 +96,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.3`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.4`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.3
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.4
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.3
+dsh plugin add dsh-ssh-manage@0.3.4
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.

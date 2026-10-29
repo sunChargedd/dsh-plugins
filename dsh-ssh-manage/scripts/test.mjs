@@ -418,6 +418,9 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   assert.equal(await getPassword(routePaths, 'renamed'), 'rename-secret')
   assert.equal(await getPassword(routePaths, 'old'), null)
 
+  const revealed = await runAction(routePaths, 'credential/reveal', { host: 'renamed' })
+  assert.equal(revealed.password, 'rename-secret')
+  await assert.rejects(() => runAction(routePaths, 'credential/reveal', { host: 'no-such-host' }), /not found|missing/i)
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))

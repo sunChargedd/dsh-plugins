@@ -167,6 +167,12 @@ export async function runAction(paths, action, params = {}) {
     }
     case 'credential/delete':
       return await removePassword(paths, requireString(params, 'host'))
+    case 'credential/reveal': {
+      const host = await findHost(paths, params.host)
+      const password = await getPassword(paths, host.host)
+      if (!password) throw new Error('No password is stored for this host')
+      return { password }
+    }
     case 'host/metadata': {
       const alias = requireString(params, 'host')
       await findHost(paths, alias)

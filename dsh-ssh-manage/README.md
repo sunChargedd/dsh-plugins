@@ -25,7 +25,7 @@
 - **主机管理**：扫描配置、分组、标签、收藏、备注、连接延迟、主机巡检；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载、测试连接；
-- **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`，也不返回给浏览器；
+- **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`；默认不返回浏览器，在主机详情点“显示密码”时才按需解密到当前页面，30 秒后自动隐藏；
 - **Agent 工具**：`ssh_manager` 把同一套能力开放给模型。
 
 不用再在终端和 DSH 之间来回切换，也不用记每个主机在配置文件里的位置。
@@ -60,7 +60,7 @@
 ### 凭据与数据
 
 - 密码使用 AES-256-GCM 加密保存在插件自己的状态目录，插件启动时自动解锁，不需要每次输入主密码，也不使用系统 Keychain。
-- 密码只用于 SSH password authentication，同时兼容只提供 keyboard-interactive 的主机；不会写入 `~/.ssh/config`、命令参数、日志或返回给浏览器。
+- 密码只用于 SSH password authentication，同时兼容只提供 keyboard-interactive 的主机；不会写入 `~/.ssh/config`、命令参数或日志。默认不返回浏览器；仅在你主动点击“显示密码”时按需解密到当前页面，30 秒后自动隐藏，且不会通过 Agent 工具返回。
 - 密码密文与本地密钥位于同一用户目录，主要防止文件被直接误读，不能抵御同一用户下的恶意进程。
 - 主机分组、标签、收藏、备注、巡检结果保存在 `hosts.json`；密码保存在 `vault.json`；删除/修改配置前写入备份目录。
 
@@ -98,16 +98,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.3`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.4`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.3
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.4
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.3
+dsh plugin add dsh-ssh-manage@0.3.4
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
