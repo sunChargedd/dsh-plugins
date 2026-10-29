@@ -61,6 +61,7 @@ window.__ModuleLoader__.load({
       'table.select': ['选择主机', 'Select host'],
       'table.unknownOs': ['未知系统', 'Unknown'],
       'table.noData': ['—', '—'],
+      'table.inspectHint': ['尚未巡检；打开主机详情点“巡检”获取系统、CPU、内存和磁盘信息。', 'Not inspected yet; open host details and click Inspect to collect OS, CPU, memory and disk facts.'],
       'table.test': ['测试连接', 'Test connection'],
       'table.copyAddress': ['复制地址', 'Copy address'],
       'table.open': ['打开终端会话', 'Open terminal session'],
@@ -2605,7 +2606,7 @@ window.__ModuleLoader__.load({
               { className: 'ssh-cell ssh-colInfo' },
               chips.length
                 ? chips.map((chip, index) => h(Chip, { key: `${index}-${chip}`, title: chip }, chip))
-                : h('span', { className: 'ssh-mutedText' }, t('table.noData')),
+                : h('span', { className: 'ssh-mutedText', title: t('table.inspectHint') }, t('table.noData')),
             )
           : null,
         columns.notes
@@ -2676,10 +2677,11 @@ window.__ModuleLoader__.load({
         observer.observe(node)
         return () => observer.disconnect()
       }, [])
-      const hasInfo = visible.some((host) => Boolean(host.system || host.cpuCores || host.memoryGB || host.diskGB))
       const hasNotes = visible.some((host) => Boolean(host.note))
       const effective = {
-        info: columns.info && hasInfo && tableWidth >= 900,
+        // The switch must be meaningful even before any host was inspected:
+        // show the column with per-row hints instead of silently hiding it.
+        info: columns.info,
         notes: columns.notes && hasNotes && tableWidth >= 1100,
       }
       const style = { gridTemplateColumns: tableTracks(effective) }
