@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { createRequire } from 'node:module'
-import { verifyHostKey } from './known-hosts.js'
+import { appendKnownHost, hostKeyType, verifyHostKey } from './known-hosts.js'
 
 // DSH Host bundles/loads plugins in a variety of Node ESM/CJS interop modes.
 // Resolve the CJS ssh2 export explicitly so `Client` is always a constructor.
@@ -12,6 +12,8 @@ if (typeof Client !== 'function') {
 }
 
 const DEFAULT_TIMEOUT = 15_000
+const pendingHostKeyFailures = new Map()
+const PENDING_HOST_KEY_TTL = 10 * 60 * 1000
 const MAX_OUTPUT_BYTES = 1024 * 1024
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const PROBE_COMMAND = [
@@ -40,6 +42,19 @@ function connectionConfig(host, password, verifyState = {}) {
       if (process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY === '1') return true
       const result = verifyHostKey(host, key)
       if (result.ok) return true
+      if (host.host) {
+        pendingHostKeyFailures.set(host.host, {
+          at: Date.now(),
+          hostname: host.hostname || host.host,
+          port: host.port || '22',
+          key: Buffer.from(key),
+          keyType: hostKeyType(key),
+          fingerprint: result.fingerprint,
+          target: result.target,
+          knownHostsPath: result.path,
+          reason: result.reason,
+        })
+      }
       const expected = result.expected ? ` (expected ${result.expected})` : ''
       verifyState.error = new Error(
         `Host key verification failed for "${label}": ${result.reason}${expected} (fingerprint ${result.fingerprint}; known_hosts: ${result.path})`,
@@ -75,6 +90,7 @@ function connect(host, password, timeout = DEFAULT_TIMEOUT) {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      if (host.host) pendingHostKeyFailures.delete(host.host)
       resolve(client)
     })
     client.once('error', fail)
@@ -84,6 +100,26 @@ function connect(host, password, timeout = DEFAULT_TIMEOUT) {
     })
     try { client.connect(connectionConfig(host, password, verifyState)) } catch (error) { fail(error) }
   })
+}
+
+/**
+ * Append the last rejected host key for an alias to known_hosts, after the UI
+ * displayed its fingerprint and the user explicitly asked to trust it.
+ */
+export function trustPendingHostKey(alias, env = process.env) {
+  const name = String(alias ?? '').trim()
+  const pending = pendingHostKeyFailures.get(name)
+  if (!pending) throw new Error(`No pending host key for "${name}"; reconnect once so the key can be verified`)
+  if (!/not in known_hosts/i.test(pending.reason)) {
+    throw new Error('The host key has changed; verify it out of band and remove the old known_hosts entry before reconnecting')
+  }
+  if (Date.now() - pending.at > PENDING_HOST_KEY_TTL) {
+    pendingHostKeyFailures.delete(name)
+    throw new Error(`The pending host key for "${name}" expired; reconnect and verify the fingerprint again`)
+  }
+  const result = appendKnownHost({ hostname: pending.hostname, port: pending.port }, pending.key, env)
+  pendingHostKeyFailures.delete(name)
+  return { ...result, alias: name }
 }
 
 function execOnClient(client, command, timeout) {
@@ -364,4 +400,4 @@ export function openInteractiveShell(host, password, onReady, options = {}) {
   })
 }
 
-export const __test = { safeRemotePath, normalizeRemotePath, isProtectedRemotePath, connectionConfig, parseProbeOutput, MAX_OUTPUT_BYTES, MAX_FILE_BYTES }
+export const __test = { safeRemotePath, normalizeRemotePath, isProtectedRemotePath, connectionConfig, parseProbeOutput, pendingHostKeyFailures, MAX_OUTPUT_BYTES, MAX_FILE_BYTES }

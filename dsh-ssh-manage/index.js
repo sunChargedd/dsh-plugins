@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { acceptWebSocket, isWebSocketUpgrade } from './lib/ws.js'
 import { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost } from './lib/ssh-config.js'
 import { deleteMetadata, loadMetadata, updateMetadata } from './lib/metadata.js'
-import { batchExec, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, uploadFile } from './lib/ssh-client.js'
+import { batchExec, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, trustPendingHostKey, uploadFile } from './lib/ssh-client.js'
 import { storagePaths } from './lib/storage.js'
 import { createExport, importExport } from './lib/transfer.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
@@ -211,6 +211,11 @@ export async function runAction(paths, action, params = {}) {
       const password = await getPassword(paths, host.host)
       if (!password) throw new Error('No password is stored for this host')
       return { password }
+    }
+    case 'host-key/trust': {
+      const host = await findHost(paths, params.host)
+      const result = trustPendingHostKey(host.host)
+      return { ...result, state: await state(paths) }
     }
     case 'data/export': {
       if (typeof params.passphrase !== 'string' || params.passphrase.length === 0) throw new Error('Passphrase is required')

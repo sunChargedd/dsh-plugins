@@ -168,6 +168,11 @@ window.__ModuleLoader__.load({
       'terminal.openDetails': ['打开主机详情', 'Open details'],
       'terminal.assetsError': ['终端组件加载失败：{message}。如果刚更新插件，请重启 DSH 后重试。', 'Could not load the terminal component: {message}. If the plugin was just updated, restart DSH and retry.'],
       'terminal.resyncFailed': ['终端输出曾中断，已尝试重新同步；如仍异常请重连。', 'Terminal output was interrupted; attempted a resync. Reconnect if problems persist.'],
+      'terminal.trustHostKey': ['信任主机密钥并重连', 'Trust host key and reconnect'],
+      'terminal.hostKeyHint': ['请先通过服务器控制台或服务商核对上方 SHA256 指纹；确认一致后再点击“信任主机密钥”。', 'Verify the SHA256 fingerprint above against the server console or provider first, then click Trust host key.'],
+      'terminal.trustHostKeyConfirm': ['确认已通过服务器控制台或服务商核对上方 SHA256 指纹？确认后会将该密钥写入 known_hosts。', 'Have you verified the SHA256 fingerprint above against the server console or provider? Confirming adds this key to known_hosts.'],
+      'terminal.hostKeyTrusted': ['已写入 known_hosts，正在重连。', 'Added to known_hosts; reconnecting.'],
+      'terminal.hostKeyTrustFailed': ['无法信任主机密钥：{message}', 'Could not trust the host key: {message}'],
       'terminal.search': ['搜索终端', 'Search terminal'],
       'terminal.searchNext': ['下一个', 'Next match'],
       'terminal.searchPrevious': ['上一个', 'Previous match'],
@@ -3525,6 +3530,7 @@ window.__ModuleLoader__.load({
       const searchOpenRef = React.useRef(false)
       const [searchText, setSearchText] = React.useState('')
       const [searchCase, setSearchCase] = React.useState(false)
+      const [trustingHostKey, setTrustingHostKey] = React.useState(false)
       const [menu, setMenu] = React.useState(null)
       const [message, setMessage] = React.useState('')
       const [retryToken, setRetryToken] = React.useState(0)
@@ -4046,6 +4052,25 @@ window.__ModuleLoader__.load({
       }, [sessionId, retryToken])
 
       const retry = () => setRetryToken((value) => value + 1)
+      const hostKeyError = status === 'error' && /host key is not in known_hosts/i.test(message)
+      const trustHostKey = async () => {
+        if (trustingHostKey) return
+        let confirmed = true
+        try {
+          confirmed = typeof window.confirm !== 'function' || window.confirm(t('terminal.trustHostKeyConfirm'))
+        } catch {}
+        if (!confirmed) return
+        setTrustingHostKey(true)
+        try {
+          await callAction('host-key/trust', { host: host.host })
+          try { model.notify?.(t('terminal.hostKeyTrusted'), 'success') } catch {}
+          retry()
+        } catch (failure) {
+          try { model.notify?.(t('terminal.hostKeyTrustFailed', { message: errorMessage(failure) }), 'error') } catch {}
+        } finally {
+          setTrustingHostKey(false)
+        }
+      }
       const showOverlay = status !== 'ready'
       return h(
         'div',
@@ -4147,6 +4172,7 @@ window.__ModuleLoader__.load({
                       : t('terminal.disconnected'),
               ),
               message ? h('div', { className: 'ssh-terminalOverlayBody' }, message) : null,
+              hostKeyError ? h('div', { className: 'ssh-terminalOverlayBody' }, t('terminal.hostKeyHint')) : null,
               status === 'error' && host.passwordConfigured !== true
                 ? h('div', { className: 'ssh-terminalOverlayBody' }, t('terminal.passwordMissing'))
                 : null,
@@ -4154,7 +4180,15 @@ window.__ModuleLoader__.load({
                 ? h(
                     'div',
                     { className: 'ssh-terminalOverlayActions' },
-                    h(Button, { size: 'sm', variant: 'primary', onClick: retry }, t('terminal.reconnect')),
+                    hostKeyError
+                      ? h(
+                          Button,
+                          { size: 'sm', variant: 'primary', onClick: () => void trustHostKey(), disabled: trustingHostKey },
+                          trustingHostKey ? h(Spinner, { size: 12 }) : h(IconLock, { size: 13 }),
+                          t('terminal.trustHostKey'),
+                        )
+                      : null,
+                    h(Button, { size: 'sm', variant: hostKeyError ? 'ghost' : 'primary', onClick: retry }, t('terminal.reconnect')),
                     h(
                       Button,
                       {

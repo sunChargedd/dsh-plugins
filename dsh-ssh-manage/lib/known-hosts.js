@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -12,6 +12,40 @@ export function knownHostsPath(env = process.env) {
 export function keyFingerprint(key) {
   const buffer = Buffer.isBuffer(key) ? key : Buffer.from(key ?? '')
   return `SHA256:${createHash('sha256').update(buffer).digest('base64').replace(/=+$/, '')}`
+}
+
+/** SSH key algorithm name from the raw public-key blob (e.g. ssh-ed25519). */
+export function hostKeyType(key) {
+  const buffer = Buffer.isBuffer(key) ? key : Buffer.from(key ?? '')
+  if (buffer.length < 4) return ''
+  const length = buffer.readUInt32BE(0)
+  if (length <= 0 || length > buffer.length - 4) return ''
+  const type = buffer.subarray(4, 4 + length).toString('ascii')
+  return /^[A-Za-z0-9@._-]+$/.test(type) ? type : ''
+}
+
+/** Append one verified public key to known_hosts, preserving the file and avoiding duplicates. */
+export function appendKnownHost(host, key, env = process.env) {
+  const target = hostKeyTarget(host)
+  const keyType = hostKeyType(key)
+  const keyBuffer = Buffer.isBuffer(key) ? key : Buffer.from(key ?? '')
+  if (!target) throw new Error('Cannot trust a host key without a hostname')
+  if (!keyType || keyBuffer.length <= 4) throw new Error('Invalid SSH public key')
+  const filePath = knownHostsPath(env)
+  const line = `${target} ${keyType} ${keyBuffer.toString('base64')}`
+  let current = ''
+  try {
+    current = readFileSync(filePath, 'utf8')
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  if (current.split(/\r?\n/).some((entry) => entry.trim() === line)) {
+    return { saved: false, already: true, target, keyType, fingerprint: keyFingerprint(keyBuffer), path: filePath }
+  }
+  mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
+  const prefix = current.length > 0 && !current.endsWith('\n') ? '\n' : ''
+  appendFileSync(filePath, `${prefix}${line}\n`, { mode: 0o600 })
+  return { saved: true, already: false, target, keyType, fingerprint: keyFingerprint(keyBuffer), path: filePath }
 }
 
 /** Host token used by known_hosts: plain host on port 22, bracketed host:port otherwise. */

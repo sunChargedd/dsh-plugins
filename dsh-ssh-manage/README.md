@@ -66,7 +66,7 @@
 - 密码密文与本地密钥位于同一用户目录，主要防止文件被直接误读，不能抵御同一用户下的恶意进程。
 - 主机分组、标签、收藏、备注、巡检结果保存在 `hosts.json`；密码保存在 `vault.json`；删除/修改配置前写入备份目录。
 
-> **主机密钥校验**：连接会按 `known_hosts` 校验主机密钥（默认 `~/.ssh/known_hosts`，可用 `SSH_KNOWN_HOSTS` 指向其它文件）。首次连接或服务器密钥变更时会拒绝连接，错误信息包含服务器 `SHA256:` 指纹、期望指纹和 known_hosts 路径；请先通过可信渠道核对指纹，再将该主机的 `[host]:port key-type base64-blob` 行写入 known_hosts（或使用 `ssh-keyscan` 后人工核对）。`DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 会完全关闭校验，仅限紧急排障，不要长期使用。
+> **主机密钥校验**：连接会按 `known_hosts` 校验主机密钥（默认 `~/.ssh/known_hosts`，可用 `SSH_KNOWN_HOSTS` 指向其它文件）。首次连接或服务器密钥变更时会拒绝连接，错误信息包含服务器 `SHA256:` 指纹、期望指纹和 known_hosts 路径；请先通过可信渠道核对指纹；首次连接可直接在终端错误页点“信任主机密钥并重连”（会再次确认），也可手动写入 known_hosts。密钥变更不会被一键信任，需先核对并移除旧条目。`DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 会完全关闭校验，仅限紧急排障，不要长期使用。
 
 ### Agent 工具
 
@@ -100,16 +100,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.11`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.12`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.11
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.12
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.11
+dsh plugin add dsh-ssh-manage@0.3.12
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -220,7 +220,7 @@ npm test
 
 ## 已知限制
 
-- **主机密钥校验**：依赖本机 `known_hosts`；首次连接需要先导入主机密钥（连接会失败并给出服务器 `SHA256:` 指纹、期望指纹与 known_hosts 路径）。只读取 `~/.ssh/known_hosts` / `SSH_KNOWN_HOSTS`，不读取 ssh_config 的 `UserKnownHostsFile`/`GlobalKnownHostsFile`，也不支持 SSH CA 主机证书。紧急情况下可设置 `DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 临时关闭校验。
+- **主机密钥校验**：依赖本机 `known_hosts`；首次连接可在终端错误页核对 `SHA256:` 指纹后一键信任并写入；密钥变更不会自动信任，需先核对并移除旧条目。只读取 `~/.ssh/known_hosts` / `SSH_KNOWN_HOSTS`，不读取 ssh_config 的 `UserKnownHostsFile`/`GlobalKnownHostsFile`，也不支持 SSH CA 主机证书。紧急情况下可设置 `DSH_SSH_MANAGER_INSECURE_HOSTKEY=1` 临时关闭校验。
 - **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；浏览器通过 `/pty/touch` 心跳续期，Host 侧超过 30 分钟无输出、输入或心跳的会话会作为孤儿清理（最大 16 个）。
 - **仅密码认证**：不支持 IdentityFile / SSH agent / ProxyJump 传输；配置中的这些字段会原样保留，但不会用于连接。ProxyJump 主机会明确报错。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。

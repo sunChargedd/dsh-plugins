@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { parseSshConfig, listSshHosts, saveSshHost, deleteSshHost, resolveSshPaths } from '../lib/ssh-config.js'
 import { getPassword, hasPassword, listPasswordAliases, removePassword, setPassword } from '../lib/vault.js'
 import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
-import { __test as sshTest, deleteRemotePath, execCommand, makeRemoteDirectory, renameRemotePath } from '../lib/ssh-client.js'
-import { knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
+import { __test as sshTest, deleteRemotePath, execCommand, makeRemoteDirectory, renameRemotePath, trustPendingHostKey } from '../lib/ssh-client.js'
+import { appendKnownHost, hostKeyType, knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
 import { createExport, importExport } from '../lib/transfer.js'
 import { __test as indexTest } from '../index.js'
 
@@ -212,7 +213,31 @@ try {
     if (savedInsecureHostKeyEnv === undefined) delete process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY
     else process.env.DSH_SSH_MANAGER_INSECURE_HOSTKEY = savedInsecureHostKeyEnv
   }
-  console.log('ok - known_hosts parsing/matching, mismatch/revoked rejection, keepalive and insecure escape')
+  
+// Host-key trust helper: append once, reject duplicates, and trust pending failures.
+{
+  const type = Buffer.from('ssh-ed25519')
+  const body = Buffer.from('test-public-key-material')
+  const frame = Buffer.alloc(4)
+  frame.writeUInt32BE(type.length, 0)
+  const key = Buffer.concat([frame, type, body])
+  const trustedPath = path.join(temp, '.known_hosts-trust')
+  assert.equal(hostKeyType(key), 'ssh-ed25519')
+  const first = appendKnownHost({ hostname: 'trust.example.com', port: '2200' }, key, { SSH_KNOWN_HOSTS: trustedPath })
+  assert.equal(first.saved, true)
+  assert.match(readFileSync(trustedPath, 'utf8'), /^\[trust\.example\.com\]:2200 ssh-ed25519 /)
+  const second = appendKnownHost({ hostname: 'trust.example.com', port: '2200' }, key, { SSH_KNOWN_HOSTS: trustedPath })
+  assert.equal(second.already, true)
+  sshTest.pendingHostKeyFailures.set('pending-host', {
+    at: Date.now(), hostname: 'pending.example.com', port: '22', key,
+    keyType: 'ssh-ed25519', fingerprint: keyFingerprint(key), target: 'pending.example.com', knownHostsPath: trustedPath, reason: 'host key is not in known_hosts for pending.example.com',
+  })
+  const trusted = trustPendingHostKey('pending-host', { SSH_KNOWN_HOSTS: trustedPath })
+  assert.equal(trusted.saved, true)
+  assert.equal(sshTest.pendingHostKeyFailures.has('pending-host'), false)
+  console.log('ok - host keys can be explicitly trusted into known_hosts')
+}
+console.log('ok - known_hosts parsing/matching, mismatch/revoked rejection, keepalive and insecure escape')
 
   const securePaths = { stateDir: path.join(temp, '.dsh', '.ssh-manager') }
   await setPassword(securePaths, 'local', 'correct horse battery staple')
