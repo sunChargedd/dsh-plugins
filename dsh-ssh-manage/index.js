@@ -81,21 +81,13 @@ function errorMessage(error) {
 let sshHostCatalogText = ''
 let sshHostCatalogRefresh = null
 
-function sshCatalogLine(host, metadata, passwordSet) {
-  const user = host.user ? `${host.user}@` : ''
-  const address = `${host.hostname || host.host}${host.port ? `:${host.port}` : ''}`
-  const group = String(metadata?.group || '').replace(/[\r\n]+/g, ' ').trim() || 'ungrouped'
-  const label = String(metadata?.label || '').replace(/[\r\n]+/g, ' ').trim()
-  const tags = Array.isArray(metadata?.tags) ? metadata.tags.map((tag) => String(tag).replace(/[\r\n]+/g, ' ')).filter(Boolean) : []
-  const parts = [
-    `alias=${host.host}`,
-    `target=${user}${address}`,
-    `group=${group}`,
-  ]
-  if (label && label !== host.host) parts.push(`display=${label}`)
-  if (tags.length) parts.push(`tags=${tags.slice(0, 4).join(',')}`)
-  parts.push(`password=${passwordSet.has(host.host) ? 'stored' : 'missing'}`)
-  return `- ${parts.join(' | ')}`
+function sshCatalogLine(host, metadata) {
+  const group = String(metadata?.group || '').replace(/[\r\n]+/g, ' ').trim()
+  const label = String(metadata?.label || '').replace(/[\r\n"']+/g, ' ').trim()
+  let line = `- ${host.host}`
+  if (group) line += ` [${group}]`
+  if (label && label !== host.host) line += ` "${label.slice(0, 60)}"`
+  return line
 }
 
 /** Refresh the host catalog injected into the DSH system prompt. */
@@ -103,20 +95,17 @@ export async function refreshSshHostCatalog(paths) {
   if (sshHostCatalogRefresh) return sshHostCatalogRefresh
   sshHostCatalogRefresh = (async () => {
     try {
-      const [{ hosts }, metadata, passwords] = await Promise.all([
+      const [{ hosts }, metadata] = await Promise.all([
         listSshHosts(paths),
         loadMetadata(paths).catch(() => ({ entries: {} })),
-        listPasswordAliases(paths).catch(() => []),
       ])
-      const passwordSet = new Set(passwords)
-      const lines = hosts.slice(0, 40).map((host) => sshCatalogLine(host, metadata.entries[host.host], passwordSet))
-      if (hosts.length > 40) lines.push(`- ... ${hosts.length - 40} more hosts; call list_hosts for the full list`)
+      const lines = hosts.slice(0, 40).map((host) => sshCatalogLine(host, metadata.entries[host.host]))
+      if (hosts.length > 40) lines.push(`- ... ${hosts.length - 40} more; call list_hosts`)
       sshHostCatalogText = [
-        'SSH hosts managed by the dsh-ssh-manage plugin. When the user asks to inspect, run commands on, upload to or download from one of these servers, call the ssh_manager tool directly with the exact alias.',
-        'Use action=exec with {host, command} for one command, batch_exec with {hosts, command} for several, and sftp_* actions for files. Use test_connection or inspect_host for status and system facts. list_hosts returns the full catalog.',
-        'Passwords are never returned by the plugin; never ask the user to paste a password into the conversation.',
-        lines.length ? lines.join('\n') : '- No SSH hosts are configured yet; the user can add them in the dsh-ssh-manage sidebar panel.',
-      ].join('\n').slice(0, 6000)
+        'SSH hosts available through the dsh-ssh-manage ssh_manager tool. When the user asks to inspect, run commands on, upload to or download from one of these servers, call ssh_manager with the exact alias.',
+        'Call action=list_hosts for user/address/port/group/password status. Use exec {host, command}, batch_exec {hosts, command}, inspect_host/test_connection and sftp_* for operations. Passwords are never returned.',
+        lines.length ? lines.join('\n') : '- No hosts configured yet; add them in the dsh-ssh-manage sidebar panel.',
+      ].join('\n').slice(0, 3000)
     } catch {
       sshHostCatalogText = 'SSH host catalog is temporarily unavailable; call ssh_manager action=list_hosts to read it.'
     } finally {
