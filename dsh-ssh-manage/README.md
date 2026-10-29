@@ -101,16 +101,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.16`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.17`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.16
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.17
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.16
+dsh plugin add dsh-ssh-manage@0.3.17
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -225,7 +225,7 @@ npm test
 - **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；浏览器通过 `/pty/touch` 心跳续期，Host 侧超过 30 分钟无输出、输入或心跳的会话会作为孤儿清理（最大 16 个）。
 - **认证方式**：支持已保存密码、`IdentityFile` 私钥和 `SSH_AUTH_SOCK` ssh-agent；私钥路径支持 `~`。带 passphrase 的加密私钥目前不弹口令，建议用 ssh-agent 加载。
 - **ProxyJump**：支持单跳，填已有主机别名（复用该主机的密码/密钥）或 `user@host:port`（使用密钥/agent）；多跳暂不支持。跳板机主机密钥同样必须已在 known_hosts 中。
-- **端口转发**：支持 LocalForward 和本地 SOCKS5；RemoteForward 尚未实现。隧道只存在于当前 Host 进程，插件卸载/DSH 退出后关闭。
+- **端口转发**：支持 LocalForward、RemoteForward（默认仅绑定跳板/目标服务器的 127.0.0.1）和本地 SOCKS5。隧道只存在于当前 Host 进程，插件卸载/DSH 退出后关闭。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。

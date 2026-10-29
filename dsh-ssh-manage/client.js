@@ -236,6 +236,8 @@ window.__ModuleLoader__.load({
       'drawer.tunnels.hint': ['本地监听 127.0.0.1，转发到目标机再访问的远程地址；本地端口留空自动分配。', 'Listens on 127.0.0.1 locally and forwards through the SSH host to the remote address. Leave the local port empty for an automatic port.'],
       'drawer.tunnels.local': ['本地转发', 'Local'],
       'drawer.tunnels.socks': ['SOCKS5 代理', 'SOCKS5'],
+      'drawer.tunnels.remote': ['远程转发', 'Remote'],
+      'drawer.tunnels.localHost': ['本地目标', 'Local target'],
       'drawer.tunnels.localPort': ['本地端口', 'Local port'],
       'drawer.tunnels.remoteHost': ['远程主机', 'Remote host'],
       'drawer.tunnels.remotePort': ['远程端口', 'Remote port'],
@@ -4556,6 +4558,7 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = React.useState(false)
       const [tunnelType, setTunnelType] = React.useState('local')
       const [localPort, setLocalPort] = React.useState('')
+      const [localHost, setLocalHost] = React.useState('127.0.0.1')
       const [remoteHost, setRemoteHost] = React.useState('127.0.0.1')
       const [remotePort, setRemotePort] = React.useState('')
       const [startingTunnel, setStartingTunnel] = React.useState(false)
@@ -4635,7 +4638,9 @@ window.__ModuleLoader__.load({
             localPort: localPort.trim() || '0',
             ...(tunnelType === 'local'
               ? { remoteHost: remoteHost.trim() || '127.0.0.1', remotePort: remotePort.trim() }
-              : {}),
+              : tunnelType === 'remote'
+                ? { localHost: localHost.trim() || '127.0.0.1', remotePort: remotePort.trim() }
+                : {}),
           })
           notify(t('drawer.tunnels.started'), 'success')
           await model.load({ quiet: true })
@@ -4763,6 +4768,7 @@ window.__ModuleLoader__.load({
             { className: 'ssh-tunnelTypes', role: 'tablist' },
             h('button', { type: 'button', className: cx('ssh-tunnelType', tunnelType === 'local' && 'active'), onClick: () => setTunnelType('local') }, t('drawer.tunnels.local')),
             h('button', { type: 'button', className: cx('ssh-tunnelType', tunnelType === 'socks' && 'active'), onClick: () => setTunnelType('socks') }, t('drawer.tunnels.socks')),
+            h('button', { type: 'button', className: cx('ssh-tunnelType', tunnelType === 'remote' && 'active'), onClick: () => setTunnelType('remote') }, t('drawer.tunnels.remote')),
           ),
           h(
             'div',
@@ -4774,10 +4780,22 @@ window.__ModuleLoader__.load({
                   h(TextInput, { key: 'host', value: remoteHost, onChange: setRemoteHost, placeholder: t('drawer.tunnels.remoteHost'), mono: true }),
                   h(TextInput, { key: 'port', value: remotePort, onChange: setRemotePort, placeholder: t('drawer.tunnels.remotePort'), mono: true }),
                 ]
-              : null,
+              : tunnelType === 'remote'
+                ? [
+                    h(TextInput, { key: 'rport', value: remotePort, onChange: setRemotePort, placeholder: t('drawer.tunnels.remotePort'), mono: true }),
+                    h('span', { key: 'arrow', className: 'ssh-tunnelArrow' }, '→'),
+                    h(TextInput, { key: 'lhost', value: localHost, onChange: setLocalHost, placeholder: t('drawer.tunnels.localHost'), mono: true }),
+                    h(TextInput, { key: 'lport', value: localPort, onChange: setLocalPort, placeholder: t('drawer.tunnels.localPort'), mono: true }),
+                  ]
+                : null,
             h(
               Button,
-              { size: 'sm', variant: 'primary', onClick: () => void startForward(), disabled: startingTunnel || (tunnelType === 'local' && !remotePort.trim()) },
+              {
+                size: 'sm',
+                variant: 'primary',
+                onClick: () => void startForward(),
+                disabled: startingTunnel || (tunnelType !== 'socks' && !remotePort.trim()) || (tunnelType === 'remote' && !localPort.trim()),
+              },
               startingTunnel ? h(Spinner, { size: 12 }) : h(IconPlay, { size: 12 }),
               t('drawer.tunnels.start'),
             ),
@@ -4792,7 +4810,9 @@ window.__ModuleLoader__.load({
                     { key: tunnel.id, className: 'ssh-tunnelRow' },
                     h('code', null, tunnel.type === 'socks'
                       ? `SOCKS5 127.0.0.1:${tunnel.localPort}`
-                      : `127.0.0.1:${tunnel.localPort} → ${tunnel.remoteHost}:${tunnel.remotePort}`),
+                      : tunnel.type === 'remote'
+                        ? `远程 :${tunnel.remotePort} → ${tunnel.localHost}:${tunnel.localPort}`
+                        : `127.0.0.1:${tunnel.localPort} → ${tunnel.remoteHost}:${tunnel.remotePort}`),
                     h(IconButton, { title: t('drawer.tunnels.stop'), onClick: () => void stopForward(tunnel.id) }, h(IconClose, { size: 13 })),
                   ),
                 ),

@@ -131,6 +131,7 @@ function tunnelList() {
     host: tunnel.host,
     localPort: tunnel.localPort,
     type: tunnel.type || 'local',
+    localHost: tunnel.localHost,
     remoteHost: tunnel.remoteHost,
     remotePort: tunnel.remotePort,
     createdAt: tunnel.createdAt,
@@ -203,32 +204,57 @@ function handleSocksConnection(client, socket) {
 
 async function startTunnel(paths, params) {
   const host = await findHost(paths, params.host)
-  const type = params.type === 'socks' ? 'socks' : 'local'
+  const type = params.type === 'socks' || params.type === 'remote' ? params.type : 'local'
   const localPort = tunnelPort(params.localPort, 'Local port')
   let remoteHost = ''
   let remotePort = 0
+  let localHost = '127.0.0.1'
   if (type === 'local') {
     remoteHost = requireString(params, 'remoteHost')
+    remotePort = tunnelPort(params.remotePort, 'Remote port')
+    if (remotePort === 0) throw new Error('Remote port must be between 1 and 65535')
+  } else if (type === 'remote') {
+    localHost = requireString(params, 'localHost')
+    if (localPort === 0) throw new Error('Local target port must be between 1 and 65535')
     remotePort = tunnelPort(params.remotePort, 'Remote port')
     if (remotePort === 0) throw new Error('Remote port must be between 1 and 65535')
   }
   const password = await passwordForHost(paths, host)
   const client = await connect(host, password, 15_000)
-  const server = type === 'socks'
-    ? net.createServer((socket) => handleSocksConnection(client, socket))
-    : net.createServer((socket) => {
-        client.forwardOut('127.0.0.1', 0, remoteHost, remotePort, (error, stream) => {
-          if (error) {
-            socket.destroy()
-            return
-          }
-          socket.pipe(stream).pipe(socket)
-          socket.on('error', () => stream.destroy())
-          stream.on('error', () => socket.destroy())
-        })
+  let server = { close: () => {} }
+  if (type === 'remote') {
+    client.on('tcp connection', (_info, accept, reject) => {
+      const stream = accept()
+      const local = net.connect(localPort, localHost)
+      local.on('error', () => { reject(); try { stream.destroy() } catch {} })
+      stream.on('error', () => local.destroy())
+      local.pipe(stream).pipe(local)
+    })
+    try {
+      remotePort = await new Promise((resolve, reject) => {
+        client.forwardIn('127.0.0.1', remotePort, (error, boundPort) => error ? reject(error) : resolve(boundPort || remotePort))
       })
+    } catch (error) {
+      client.end()
+      throw new Error(`RemoteForward failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  } else {
+    server = type === 'socks'
+      ? net.createServer((socket) => handleSocksConnection(client, socket))
+      : net.createServer((socket) => {
+          client.forwardOut('127.0.0.1', 0, remoteHost, remotePort, (error, stream) => {
+            if (error) {
+              socket.destroy()
+              return
+            }
+            socket.pipe(stream).pipe(socket)
+            socket.on('error', () => stream.destroy())
+            stream.on('error', () => socket.destroy())
+          })
+        })
+  }
   const id = `tunnel-${Date.now()}-${++tunnelCounter}`
-  const tunnel = { id, host: host.host, type, localPort, remoteHost, remotePort, createdAt: new Date().toISOString(), client, server }
+  const tunnel = { id, host: host.host, type, localPort, localHost, remoteHost, remotePort, createdAt: new Date().toISOString(), client, server }
   tunnels.set(id, tunnel)
   const cleanup = () => {
     if (!tunnels.has(id)) return
@@ -238,19 +264,21 @@ async function startTunnel(paths, params) {
   }
   client.once('close', cleanup)
   client.once('error', cleanup)
-  try {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(localPort, '127.0.0.1', () => {
-        server.removeListener('error', reject)
-        resolve()
+  if (type !== 'remote') {
+    try {
+      await new Promise((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(localPort, '127.0.0.1', () => {
+          server.removeListener('error', reject)
+          resolve()
+        })
       })
-    })
-  } catch (error) {
-    cleanup()
-    throw error
+    } catch (error) {
+      cleanup()
+      throw error
+    }
+    tunnel.localPort = server.address().port
   }
-  tunnel.localPort = server.address().port
   return { tunnel: { ...tunnelList().find((entry) => entry.id === id) } }
 }
 
