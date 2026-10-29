@@ -26,7 +26,7 @@
 - **DSH Agent 集成**：向 DSH 系统提示注入精简主机目录（别名/分组/显示名），地址等详情由 `list_hosts` 按需获取以控制 token；Agent 可直接用 `ssh_manager` 执行命令、批量命令、巡检和 SFTP 操作；
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **备份迁移**：设置页可导出/导入主机、分组、标签、备注、收藏和密码；导出文件用自定义口令二次加密（scrypt + AES-256-GCM），导入按别名合并；
-- **本地端口转发**：在主机详情启动 `127.0.0.1:本地端口 → 远程主机:端口` 隧道，支持 ProxyJump/密钥，插件卸载时自动关闭；
+- **端口转发**：主机详情启动 `127.0.0.1:本地端口 → 远程主机:端口` 本地转发或本地 SOCKS5 代理，支持 ProxyJump/密钥，插件卸载时自动关闭；
 - **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载、测试连接；
 - **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`；默认不返回浏览器，在主机详情点“显示密码”时才按需解密到当前页面，30 秒后自动隐藏；
 - **Agent 工具**：`ssh_manager` 把同一套能力开放给模型。
@@ -101,16 +101,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.15`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.16`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.15
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.16
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.15
+dsh plugin add dsh-ssh-manage@0.3.16
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -225,7 +225,7 @@ npm test
 - **会话生命周期**：终端会话由 Host 保留，切换 DSH 会话/暂时离开插件面板/刷新页面后会重新附着并回放最近约 256 KB 输出；浏览器通过 `/pty/touch` 心跳续期，Host 侧超过 30 分钟无输出、输入或心跳的会话会作为孤儿清理（最大 16 个）。
 - **认证方式**：支持已保存密码、`IdentityFile` 私钥和 `SSH_AUTH_SOCK` ssh-agent；私钥路径支持 `~`。带 passphrase 的加密私钥目前不弹口令，建议用 ssh-agent 加载。
 - **ProxyJump**：支持单跳，填已有主机别名（复用该主机的密码/密钥）或 `user@host:port`（使用密钥/agent）；多跳暂不支持。跳板机主机密钥同样必须已在 known_hosts 中。
-- **端口转发**：当前支持 LocalForward（本地监听转远程）；RemoteForward 和 SOCKS5 尚未实现。隧道只存在于当前 Host 进程，插件卸载/DSH 退出后关闭。
+- **端口转发**：支持 LocalForward 和本地 SOCKS5；RemoteForward 尚未实现。隧道只存在于当前 Host 进程，插件卸载/DSH 退出后关闭。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
 - **文件大小**：SFTP 单文件上限 10 MB。

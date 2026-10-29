@@ -130,33 +130,105 @@ function tunnelList() {
     id: tunnel.id,
     host: tunnel.host,
     localPort: tunnel.localPort,
+    type: tunnel.type || 'local',
     remoteHost: tunnel.remoteHost,
     remotePort: tunnel.remotePort,
     createdAt: tunnel.createdAt,
   }))
 }
 
-async function startTunnel(paths, params) {
-  const host = await findHost(paths, params.host)
-  const remoteHost = requireString(params, 'remoteHost')
-  const remotePort = tunnelPort(params.remotePort, 'Remote port')
-  if (remotePort === 0) throw new Error('Remote port must be between 1 and 65535')
-  const localPort = tunnelPort(params.localPort, 'Local port')
-  const password = await passwordForHost(paths, host)
-  const client = await connect(host, password, 15_000)
-  const server = net.createServer((socket) => {
-    client.forwardOut('127.0.0.1', 0, remoteHost, remotePort, (error, stream) => {
+function handleSocksConnection(client, socket) {
+  let buffer = Buffer.alloc(0)
+  let stage = 'greeting'
+  const onData = (chunk) => {
+    buffer = Buffer.concat([buffer, chunk])
+    if (stage === 'greeting') {
+      if (buffer.length < 2) return
+      const count = buffer[1]
+      if (buffer.length < 2 + count) return
+      socket.write(Buffer.from([5, 0]))
+      buffer = buffer.subarray(2 + count)
+      stage = 'request'
+    }
+    if (stage !== 'request') return
+    if (buffer.length < 4) return
+    if (buffer[0] !== 5 || buffer[1] !== 1) {
+      socket.destroy()
+      return
+    }
+    const atyp = buffer[3]
+    let offset = 4
+    let host = ''
+    if (atyp === 1) {
+      if (buffer.length < offset + 4 + 2) return
+      host = [...buffer.subarray(offset, offset + 4)].join('.')
+      offset += 4
+    } else if (atyp === 3) {
+      if (buffer.length < offset + 1) return
+      const length = buffer[offset]
+      if (buffer.length < offset + 1 + length + 2) return
+      host = buffer.subarray(offset + 1, offset + 1 + length).toString('utf8')
+      offset += 1 + length
+    } else if (atyp === 4) {
+      if (buffer.length < offset + 16 + 2) return
+      const parts = []
+      for (let index = 0; index < 16; index += 2) parts.push(buffer.readUInt16BE(offset + index).toString(16))
+      host = parts.join(':')
+      offset += 16
+    } else {
+      socket.destroy()
+      return
+    }
+    const port = buffer.readUInt16BE(offset)
+    const rest = buffer.subarray(offset + 2)
+    socket.removeListener('data', onData)
+    socket.pause()
+    client.forwardOut('127.0.0.1', 0, host, port, (error, stream) => {
       if (error) {
+        try { socket.end(Buffer.from([5, 1, 0, 1, 0, 0, 0, 0, 0, 0])) } catch {}
         socket.destroy()
         return
       }
+      try { socket.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0])) } catch {}
+      if (rest.length > 0) stream.write(rest)
       socket.pipe(stream).pipe(socket)
+      socket.resume()
       socket.on('error', () => stream.destroy())
       stream.on('error', () => socket.destroy())
     })
-  })
+  }
+  socket.on('data', onData)
+  socket.on('error', () => {})
+}
+
+async function startTunnel(paths, params) {
+  const host = await findHost(paths, params.host)
+  const type = params.type === 'socks' ? 'socks' : 'local'
+  const localPort = tunnelPort(params.localPort, 'Local port')
+  let remoteHost = ''
+  let remotePort = 0
+  if (type === 'local') {
+    remoteHost = requireString(params, 'remoteHost')
+    remotePort = tunnelPort(params.remotePort, 'Remote port')
+    if (remotePort === 0) throw new Error('Remote port must be between 1 and 65535')
+  }
+  const password = await passwordForHost(paths, host)
+  const client = await connect(host, password, 15_000)
+  const server = type === 'socks'
+    ? net.createServer((socket) => handleSocksConnection(client, socket))
+    : net.createServer((socket) => {
+        client.forwardOut('127.0.0.1', 0, remoteHost, remotePort, (error, stream) => {
+          if (error) {
+            socket.destroy()
+            return
+          }
+          socket.pipe(stream).pipe(socket)
+          socket.on('error', () => stream.destroy())
+          stream.on('error', () => socket.destroy())
+        })
+      })
   const id = `tunnel-${Date.now()}-${++tunnelCounter}`
-  const tunnel = { id, host: host.host, localPort, remoteHost, remotePort, createdAt: new Date().toISOString(), client, server }
+  const tunnel = { id, host: host.host, type, localPort, remoteHost, remotePort, createdAt: new Date().toISOString(), client, server }
   tunnels.set(id, tunnel)
   const cleanup = () => {
     if (!tunnels.has(id)) return
@@ -1012,7 +1084,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, handleSocksConnection, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 
