@@ -8,6 +8,7 @@ import { getPassword, hasPassword, listPasswordAliases, removePassword, setPassw
 import { __test as metadataTest, loadMetadata, updateMetadata } from '../lib/metadata.js'
 import { __test as sshTest, deleteRemotePath, execCommand, makeRemoteDirectory, renameRemotePath } from '../lib/ssh-client.js'
 import { knownHostsPath, keyFingerprint, parseKnownHosts, verifyHostKey } from '../lib/known-hosts.js'
+import { createExport, importExport } from '../lib/transfer.js'
 import { __test as indexTest } from '../index.js'
 
 const { normalizeEntry } = metadataTest
@@ -421,6 +422,44 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   const revealed = await runAction(routePaths, 'credential/reveal', { host: 'renamed' })
   assert.equal(revealed.password, 'rename-secret')
   await assert.rejects(() => runAction(routePaths, 'credential/reveal', { host: 'no-such-host' }), /not found|missing/i)
+  // Encrypted export/import: hosts, metadata and passwords round-trip, and
+  // the plaintext password never appears in the exported JSON.
+  const transferA = {
+    configPath: path.join(temp, '.transfer-a', 'config'),
+    stateDir: path.join(temp, '.transfer-a', 'state'),
+    backupDir: path.join(temp, '.transfer-a', 'backups'),
+  }
+  const transferB = {
+    configPath: path.join(temp, '.transfer-b', 'config'),
+    stateDir: path.join(temp, '.transfer-b', 'state'),
+    backupDir: path.join(temp, '.transfer-b', 'backups'),
+  }
+  await mkdir(path.dirname(transferA.configPath), { recursive: true })
+  await mkdir(path.dirname(transferB.configPath), { recursive: true })
+  await saveSshHost({ paths: transferA, host: { host: 'alpha', aliases: ['a'], hostname: 'alpha.example.com', user: 'root', port: '2222' } })
+  await updateMetadata(transferA, 'alpha', { group: 'ops', note: 'transfer me', favorite: true })
+  await setPassword(transferA, 'alpha', 'plain-transfer-secret')
+  const exported = await createExport(transferA, 'correct horse battery')
+  assert.equal(exported.format, 'dsh-ssh-manage-export')
+  assert.equal(JSON.stringify(exported).includes('plain-transfer-secret'), false)
+  const restored = await importExport(transferB, exported, 'correct horse battery')
+  assert.equal(restored.created, 1)
+  assert.equal(restored.metadata, 1)
+  assert.equal(restored.passwords, 1)
+  const hostsB = await listSshHosts(transferB)
+  assert.equal(hostsB.hosts.length, 1)
+  assert.equal(hostsB.hosts[0].host, 'alpha')
+  assert.equal(hostsB.hosts[0].hostname, 'alpha.example.com')
+  assert.equal(hostsB.hosts[0].port, '2222')
+  assert.deepEqual((await loadMetadata(transferB)).entries.alpha.tags, [])
+  assert.equal((await loadMetadata(transferB)).entries.alpha.note, 'transfer me')
+  assert.equal(await getPassword(transferB, 'alpha'), 'plain-transfer-secret')
+  await assert.rejects(() => importExport(transferB, exported, 'wrong passphrase'), /Cannot decrypt/)
+  const merged = await importExport(transferB, exported, 'correct horse battery')
+  assert.equal(merged.created, 0)
+  assert.equal(merged.updated, 1)
+  console.log('ok - encrypted export/import round-trips hosts, metadata and passwords')
+
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))

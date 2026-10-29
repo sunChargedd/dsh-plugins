@@ -6,6 +6,7 @@ import { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost } from './lib
 import { deleteMetadata, loadMetadata, updateMetadata } from './lib/metadata.js'
 import { batchExec, deleteRemotePath, downloadFile, execCommand, inspectHost, listRemoteFiles, makeRemoteDirectory, openPty, renameRemotePath, testConnection, uploadFile } from './lib/ssh-client.js'
 import { storagePaths } from './lib/storage.js'
+import { createExport, importExport } from './lib/transfer.js'
 import { getPassword, listPasswordAliases, removePassword, setPassword } from './lib/vault.js'
 
 const STATE_ROUTE = '/dsh-ssh-manage/state'
@@ -172,6 +173,15 @@ export async function runAction(paths, action, params = {}) {
       const password = await getPassword(paths, host.host)
       if (!password) throw new Error('No password is stored for this host')
       return { password }
+    }
+    case 'data/export': {
+      if (typeof params.passphrase !== 'string' || params.passphrase.length === 0) throw new Error('Passphrase is required')
+      return await createExport(paths, params.passphrase)
+    }
+    case 'data/import': {
+      if (typeof params.passphrase !== 'string' || params.passphrase.length === 0) throw new Error('Passphrase is required')
+      const result = await importExport(paths, params.export, params.passphrase)
+      return { ...result, state: await state(paths) }
     }
     case 'host/metadata': {
       const alias = requireString(params, 'host')

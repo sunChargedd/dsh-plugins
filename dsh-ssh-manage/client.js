@@ -261,6 +261,32 @@ window.__ModuleLoader__.load({
       'settings.stateDir': ['状态目录', 'State directory'],
       'settings.vault': ['凭据仓库', 'Credential vault'],
       'settings.vaultDesc': ['密码使用 AES-256-GCM 加密保存在本机状态目录，插件启动时自动解锁，不需要主密码。', 'Passwords are AES-256-GCM encrypted in the local state directory and unlocked automatically; no master password.'],
+      'settings.transfer': ['备份与迁移', 'Backup and migration'],
+      'settings.transferBadge': ['加密导出', 'Encrypted export'],
+      'settings.transferDesc': ['导出主机、分组、标签、备注、收藏和密码，密码用你设置的口令二次加密；导入时按别名合并，不会删除现有主机。', 'Export hosts, groups, tags, notes, favorites and passwords. Passwords are encrypted again with a passphrase you choose; import merges by alias and never deletes existing hosts.'],
+      'settings.export': ['导出', 'Export'],
+      'settings.import': ['导入', 'Import'],
+      'transfer.exportTitle': ['导出主机数据', 'Export host data'],
+      'transfer.importTitle': ['导入主机数据', 'Import host data'],
+      'transfer.exportDesc': ['将导出 {count} 台主机及其分组、标签、备注、收藏和全部密码。密码部分会用口令再次加密。', 'Exports {count} host(s) with groups, tags, notes, favorites and all passwords. Password data is encrypted again with a passphrase.'],
+      'transfer.importDesc': ['选择由 dsh-ssh-manage 导出的 JSON 文件，输入导出时设置的口令。按主机别名合并：相同别名更新，新别名创建，不删除现有主机。', 'Choose a JSON file exported by dsh-ssh-manage and enter its passphrase. Hosts merge by alias: existing aliases update, new ones are created, nothing is deleted.'],
+      'transfer.passphrase': ['导出/导入口令（至少 8 位）', 'Export/import passphrase (at least 8 characters)'],
+      'transfer.confirmPassphrase': ['再次输入口令', 'Repeat the passphrase'],
+      'transfer.passphraseHint': ['口令只用于加密导出文件，不会保存。忘记口令将无法恢复导出的密码。', 'The passphrase only encrypts the export file and is not stored. A lost passphrase cannot be recovered.'],
+      'transfer.chooseFile': ['选择导出 JSON 文件', 'Choose export JSON file'],
+      'transfer.fileReady': ['已选择：{count} 台主机', 'Selected: {count} host(s)'],
+      'transfer.fileTooLarge': ['文件超过 8 MB，拒绝读取。', 'File is larger than 8 MB and was rejected.'],
+      'transfer.invalidFile': ['不是有效的 dsh-ssh-manage 导出文件。', 'Not a valid dsh-ssh-manage export file.'],
+      'transfer.chooseFileFirst': ['请先选择导出文件。', 'Choose an export file first.'],
+      'transfer.passphraseShort': ['口令至少需要 8 位。', 'Passphrase must be at least 8 characters.'],
+      'transfer.passphraseMismatch': ['两次输入的口令不一致。', 'The passphrases do not match.'],
+      'transfer.exportWarning': ['导出文件包含加密后的密码，请妥善保管文件与口令，不要上传到公共位置。', 'The export contains encrypted passwords; keep both the file and passphrase safe and do not upload them publicly.'],
+      'transfer.importMergeNote': ['导入采用合并模式，不会删除现有主机或密码。', 'Import uses merge mode and never deletes existing hosts or passwords.'],
+      'transfer.doExport': ['加密导出', 'Export encrypted'],
+      'transfer.doImport': ['导入并合并', 'Import and merge'],
+      'transfer.exported': ['已导出 {count} 台主机', 'Exported {count} host(s)'],
+      'transfer.imported': ['导入完成：新建 {created}，更新 {updated}，恢复密码 {passwords}', 'Import complete: {created} created, {updated} updated, {passwords} password(s) restored'],
+      'transfer.importWarnings': ['{count} 条记录未能导入，请查看提示。', '{count} record(s) could not be imported.'],
       'settings.vaultCount': ['{count} 台主机已保存密码', '{count} hosts have a stored password'],
       'settings.vaultNone': ['还没有保存任何密码', 'No passwords stored yet'],
       'settings.appearance': ['外观', 'Appearance'],
@@ -475,6 +501,16 @@ window.__ModuleLoader__.load({
       const anchor = document.createElement('a')
       anchor.href = url
       anchor.download = name || 'download'
+      anchor.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1500)
+    }
+
+    function downloadTextFile(name, text, type = 'application/json') {
+      const blob = new Blob([text], { type })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = name || 'dsh-ssh-manage-export.json'
       anchor.click()
       setTimeout(() => URL.revokeObjectURL(url), 1500)
     }
@@ -5287,8 +5323,201 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function TransferDialog({ model, mode, onClose }) {
+      const { t, notify, load, hosts } = model
+      const [passphrase, setPassphrase] = React.useState('')
+      const [confirmation, setConfirmation] = React.useState('')
+      const [file, setFile] = React.useState(null)
+      const [reading, setReading] = React.useState(false)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState('')
+      const busyRef = React.useRef(false)
+      const fileRef = React.useRef(null)
+
+      React.useEffect(() => {
+        const onKey = (event) => {
+          if (event.key !== 'Escape' || busyRef.current) return
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+        }
+        document.addEventListener('keydown', onKey, true)
+        return () => document.removeEventListener('keydown', onKey, true)
+      }, [onClose])
+
+      async function pickFile(event) {
+        const picked = event.target.files?.[0]
+        event.target.value = ''
+        if (!picked) return
+        if (picked.size > 8 * 1024 * 1024) {
+          setError(t('transfer.fileTooLarge'))
+          setFile(null)
+          return
+        }
+        setReading(true)
+        setError('')
+        try {
+          const text = typeof picked.text === 'function'
+            ? await picked.text()
+            : await new Promise((resolve, reject) => {
+                const reader = new FileReader()
+                reader.onload = () => resolve(String(reader.result ?? ''))
+                reader.onerror = () => reject(reader.error ?? new Error('Cannot read file'))
+                reader.readAsText(picked)
+              })
+          const parsed = JSON.parse(text)
+          if (!parsed || parsed.format !== 'dsh-ssh-manage-export' || !Array.isArray(parsed.hosts)) {
+            throw new Error(t('transfer.invalidFile'))
+          }
+          setFile({ name: picked.name, data: parsed })
+        } catch (failure) {
+          setFile(null)
+          setError(errorMessage(failure))
+        } finally {
+          setReading(false)
+        }
+      }
+
+      async function submit() {
+        if (busyRef.current) return
+        if (passphrase.length < 8) {
+          setError(t('transfer.passphraseShort'))
+          return
+        }
+        if (mode === 'export' && passphrase !== confirmation) {
+          setError(t('transfer.passphraseMismatch'))
+          return
+        }
+        if (mode === 'import' && !file) {
+          setError(t('transfer.chooseFileFirst'))
+          return
+        }
+        busyRef.current = true
+        setBusy(true)
+        setError('')
+        try {
+          if (mode === 'export') {
+            const value = await callAction('data/export', { passphrase })
+            const stamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
+            downloadTextFile(`dsh-ssh-manage-export-${stamp}.json`, JSON.stringify(value, null, 2))
+            notify(t('transfer.exported', { count: value?.hosts?.length ?? hosts.length }), 'success')
+          } else {
+            const value = await callAction('data/import', { export: file.data, passphrase })
+            const summary = t('transfer.imported', {
+              created: value?.created ?? 0,
+              updated: value?.updated ?? 0,
+              passwords: value?.passwords ?? 0,
+            })
+            if (Array.isArray(value?.errors) && value.errors.length > 0) {
+              notify(`${summary}；${t('transfer.importWarnings', { count: value.errors.length })}`, 'error')
+            } else {
+              notify(summary, 'success')
+            }
+            await load({ quiet: true })
+          }
+          onClose()
+        } catch (failure) {
+          setError(errorMessage(failure))
+        } finally {
+          busyRef.current = false
+          setBusy(false)
+        }
+      }
+
+      return h(
+        'div',
+        {
+          className: 'ssh-fileDialogScrim',
+          onMouseDown: () => {
+            if (!busyRef.current) onClose()
+          },
+        },
+        h(
+          'div',
+          {
+            className: 'ssh-fileDialog ssh-transferDialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-label': mode === 'export' ? t('transfer.exportTitle') : t('transfer.importTitle'),
+            onMouseDown: (event) => event.stopPropagation(),
+          },
+          h('div', { className: 'ssh-fileDialogTitle' }, mode === 'export' ? t('transfer.exportTitle') : t('transfer.importTitle')),
+          h(
+            'div',
+            { className: 'ssh-fileDialogBody' },
+            mode === 'export'
+              ? t('transfer.exportDesc', { count: hosts.length })
+              : t('transfer.importDesc'),
+          ),
+          mode === 'import'
+            ? h(
+                'div',
+                { className: 'ssh-transferFile' },
+                h('input', {
+                  ref: fileRef,
+                  type: 'file',
+                  accept: '.json,application/json',
+                  className: 'ssh-srOnly',
+                  onChange: (event) => void pickFile(event),
+                }),
+                h(
+                  Button,
+                  { size: 'sm', variant: 'ghost', onClick: () => fileRef.current?.click(), disabled: reading || busy },
+                  reading ? h(Spinner, { size: 12 }) : h(IconUpload, { size: 13 }),
+                  file ? file.name : t('transfer.chooseFile'),
+                ),
+                file ? h(Badge, { tone: 'ok' }, t('transfer.fileReady', { count: file.data.hosts.length })) : null,
+              )
+            : null,
+          h(TextInput, {
+            type: 'password',
+            value: passphrase,
+            onChange: setPassphrase,
+            placeholder: t('transfer.passphrase'),
+            autoFocus: true,
+            disabled: busy,
+            onKeyDown: (event) => {
+              if (event.key === 'Enter') void submit()
+            },
+          }),
+          mode === 'export'
+            ? h(TextInput, {
+                type: 'password',
+                value: confirmation,
+                onChange: setConfirmation,
+                placeholder: t('transfer.confirmPassphrase'),
+                disabled: busy,
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter') void submit()
+                },
+              })
+            : null,
+          h('div', { className: 'ssh-sectionHint' }, t('transfer.passphraseHint')),
+          error ? h('div', { className: 'ssh-formError' }, h(IconAlert, { size: 13 }), h('span', null, error)) : null,
+          h(
+            'div',
+            { className: 'ssh-sectionHint ssh-revealWarning' },
+            h(IconAlert, { size: 12 }),
+            h('span', null, mode === 'export' ? t('transfer.exportWarning') : t('transfer.importMergeNote')),
+          ),
+          h(
+            'div',
+            { className: 'ssh-fileDialogActions' },
+            h(Button, { variant: 'ghost', size: 'sm', onClick: onClose, disabled: busy }, t('common.cancel')),
+            h(
+              Button,
+              { variant: 'primary', size: 'sm', onClick: () => void submit(), disabled: busy || reading },
+              busy ? h(Spinner, { size: 12 }) : null,
+              mode === 'export' ? t('transfer.doExport') : t('transfer.doImport'),
+            ),
+          ),
+        ),
+      )
+    }
+
     function SettingsTab({ model }) {
       const { t, snapshot, hosts, columns, setColumns, copyValue, load, refreshing } = model
+      const [transferMode, setTransferMode] = React.useState(null)
       const passwordCount = hosts.filter((host) => host.passwordConfigured).length
       const exists = snapshot?.exists === true
       return h(
@@ -5362,6 +5591,33 @@ window.__ModuleLoader__.load({
           h(
             'section',
             { className: 'ssh-card' },
+            h(
+              'div',
+              { className: 'ssh-cardHead' },
+              h('h3', null, t('settings.transfer')),
+              h(Badge, { tone: 'muted' }, t('settings.transferBadge')),
+            ),
+            h('p', { className: 'ssh-cardDesc' }, t('settings.transferDesc')),
+            h(
+              'div',
+              { className: 'ssh-cardActions' },
+              h(
+                Button,
+                { size: 'sm', variant: 'ghost', onClick: () => setTransferMode('export') },
+                h(IconDownload, { size: 13 }),
+                t('settings.export'),
+              ),
+              h(
+                Button,
+                { size: 'sm', variant: 'ghost', onClick: () => setTransferMode('import') },
+                h(IconUpload, { size: 13 }),
+                t('settings.import'),
+              ),
+            ),
+          ),
+          h(
+            'section',
+            { className: 'ssh-card' },
             h('div', { className: 'ssh-cardHead' }, h('h3', null, t('settings.appearance'))),
             h(
               'div',
@@ -5408,6 +5664,13 @@ window.__ModuleLoader__.load({
               h('span', null, t('settings.aboutTag')),
             ),
           ),
+          transferMode
+            ? h(TransferDialog, {
+                model,
+                mode: transferMode,
+                onClose: () => setTransferMode(null),
+              })
+            : null,
         ),
       )
     }
@@ -5705,6 +5968,8 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-fileRow{display:grid;grid-template-columns:22px minmax(0,1fr) 90px auto;align-items:center;gap:8px;padding:0 10px;height:34px;border-bottom:.5px solid var(--ssh-border);font-size:12px}
 .ssh-fileActions{display:flex;align-items:center;gap:2px}
 .ssh-fileDialogScrim{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:20px;background:var(--dsw-alias-bg-mask-1,color-mix(in srgb,var(--ssh-text) 18%,transparent))}
+.ssh-transferDialog{width:min(460px,100%)}
+.ssh-transferFile{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .ssh-fileDialog{width:min(360px,100%);padding:14px;border:.5px solid var(--ssh-border-strong);border-radius:12px;background:var(--ssh-layer-1);box-shadow:var(--ssh-shadow);display:flex;flex-direction:column;gap:10px}
 .ssh-fileDialogTitle{font-size:13px;font-weight:600;color:var(--ssh-text)}
 .ssh-fileDialogBody{font-size:12px;line-height:1.5;color:var(--ssh-text-2)}

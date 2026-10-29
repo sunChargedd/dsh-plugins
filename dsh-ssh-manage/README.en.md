@@ -24,6 +24,7 @@
 
 - **Host management** — scan the config, groups, tags, favorites, notes, latency and host inspection;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
+- **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
 - **Day-to-day operations** — batch commands, SFTP browse/mkdir/rename/delete/upload/download, connection tests;
 - **Credentials** — one AES-256-GCM encrypted password per host, never written to `~/.ssh/config`; passwords are not returned to the browser by default, but Show password decrypts one on demand in the current page and auto-hides it after 30 seconds;
 - **Agent tool** — `ssh_manager` exposes the same capabilities to the model.
@@ -96,16 +97,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.5`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.6`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.5
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.6
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.5
+dsh plugin add dsh-ssh-manage@0.3.6
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
@@ -221,6 +222,7 @@ The terminal uses vendored xterm.js 6.0.0 (MIT, see `assets/LICENSE.xterm`), @xt
 - **Config editing scope**: the editor only changes `Host`, `HostName`, `User`, `Port` and plugin metadata; maintain other SSH directives in `~/.ssh/config`.
 - **Batch commands** run one command; they are not an interactive terminal. Per-host output is capped at 1 MB and marked `truncated` when exceeded.
 - **File size**: SFTP files are capped at 10 MB.
+- **Export safety**: encrypted exports contain all passwords; a lost passphrase is unrecoverable. Import only merges and never deletes existing hosts or passwords.
 - **SFTP rename/delete**: rename refuses to overwrite an existing destination by default (`sftp_rename` can pass `overwrite: true` explicitly); deleting a directory requires it to be empty, and root paths, `.`/`..` and drive roots are refused; symlinks are removed as links, not followed.
 - **xterm assets**: the first terminal open loads about 500 KB of xterm.js basics; the search addon loads on demand, about 556 KiB total from the same origin (no CDN).
 
