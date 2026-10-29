@@ -1297,7 +1297,7 @@ window.__ModuleLoader__.load({
       const [toastState, setToastState] = React.useState(null)
       const [pending, setPending] = React.useState({})
       const [sort, setSort] = React.useState({ key: 'name', dir: 'asc' })
-      const [columns, setColumns] = React.useState({ info: true, notes: true, compact: false })
+      const [columns, setColumns] = React.useState({ info: false, notes: true, compact: false })
       const [sessions, setSessions] = React.useState(() =>
         persistentPanelState.sessions.map((session) => ({ id: session.id, hostAlias: session.hostAlias })),
       )

@@ -98,16 +98,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.10`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.11`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.10
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.11
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.10
+dsh plugin add dsh-ssh-manage@0.3.11
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
