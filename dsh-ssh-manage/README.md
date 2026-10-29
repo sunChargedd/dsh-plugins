@@ -28,7 +28,7 @@
 - **交互式终端**：ssh2 分配 PTY，xterm.js 渲染，支持彩色输出、方向键、`vim`/`top` 等全屏程序和窗口自适应；
 - **备份迁移**：设置页可导出/导入主机、分组、标签、备注、收藏和密码；导出文件用自定义口令二次加密（scrypt + AES-256-GCM），导入按别名合并；
 - **端口转发**：主机详情启动 `127.0.0.1:本地端口 → 远程主机:端口` 本地转发或本地 SOCKS5 代理，支持 ProxyJump/密钥，插件卸载时自动关闭；
-- **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载、测试连接；
+- **日常运维**：批量命令、SFTP 目录浏览 / 新建 / 重命名 / 删除 / 上传 / 下载 / 远程文本编辑、传输队列与覆盖确认、测试连接；
 - **凭据管理**：每台主机保存一份 AES-256-GCM 加密密码，不写进 `~/.ssh/config`；默认不返回浏览器，在主机详情点“显示密码”时才按需解密到当前页面，30 秒后自动隐藏；
 - **Agent 工具**：`ssh_manager` 把同一套能力开放给模型。
 
@@ -57,7 +57,7 @@
 ### 批量命令与文件
 
 - **批量命令**：勾选多台主机，一次执行同一条命令，按主机汇总 stdout / stderr / 退出码。
-- **SFTP**：在主机抽屉里浏览远程目录，新建文件夹、重命名、删除文件/空目录、上传、下载；会记住每台主机上次所在目录。
+- **SFTP**：在主机抽屉里浏览远程目录，新建文件夹、重命名、删除文件/空目录、上传（支持多选和覆盖确认）、下载、直接编辑远程文本文件并保存；会记住每台主机上次所在目录。
 - **测试连接**：记录连接延迟，结果写回主机信息。
 - **主机巡检**：读取发行版、CPU 核心数、内存、磁盘容量。
 
@@ -102,16 +102,16 @@
 
 ### 从 npm 安装（推荐）
 
-npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.18`）。
+npm 包：[`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage)（当前版本 `0.3.19`）。
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.18
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.19
 ```
 
 或使用 DSH CLI：
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.18
+dsh plugin add dsh-ssh-manage@0.3.19
 ```
 
 安装后刷新 Web 页面，左侧栏会出现「SSH 主机」入口，入口 id 为 `dsh-ssh-manage`。
@@ -230,7 +230,7 @@ npm test
 - **Agent 审批**：需要 DSH 审批服务；审批不可用时危险操作会 fail closed（拒绝）。只读模式仍允许 list/test/inspect/下载。
 - **配置编辑范围**：编辑器只修改 `Host`、`HostName`、`User`、`Port` 与插件元数据；其它 SSH 指令请在 `~/.ssh/config` 中维护。
 - **批量命令**：一次执行一条命令，不等同于交互式终端；单台输出上限 1 MB，超出会标记 `truncated`。
-- **文件大小**：SFTP 单文件上限 10 MB。
+- **文件大小**：SFTP 单文件上限 10 MB；远程文本编辑上限 1 MB。
 - **SFTP 重命名/删除**：重命名默认拒绝覆盖已存在的目标（`sftp_rename` 工具可显式传 `overwrite: true`）；删除目录要求目录为空，根路径、`.`/`..` 和盘符根会被拒绝；符号链接按链接本身删除，不会跟随到目标。
 - **xterm 资源**：首次打开会加载约 500 KB 的 xterm.js 基础资源；搜索组件按需加载，总计约 556 KiB（本地同源，不访问 CDN）。
 

@@ -212,6 +212,14 @@ window.__ModuleLoader__.load({
       'drawer.files.created': ['文件夹已创建', 'Folder created'],
       'drawer.files.renamed': ['已重命名', 'Renamed'],
       'drawer.files.deleted': ['已删除', 'Deleted'],
+      'drawer.files.edit': ['编辑远程文件', 'Edit remote file'],
+      'drawer.files.editHint': ['直接编辑远程文本文件并保存；最大 1 MB。保存会覆盖远程文件。', 'Edit a remote text file and save it back; up to 1 MB. Saving overwrites the remote file.'],
+      'drawer.files.editDiscard': ['有未保存的修改，确定放弃？', 'Discard unsaved changes?'],
+      'drawer.files.editBinary': ['该文件看起来是二进制，不能作为文本编辑。', 'This file looks binary and cannot be edited as text.'],
+      'drawer.files.edited': ['远程文件已保存', 'Remote file saved'],
+      'drawer.files.overwrite': ['远程已存在“{name}”，确定覆盖？', 'Remote "{name}" already exists. Overwrite?'],
+      'drawer.files.transferRunning': ['传输中', 'Running'],
+      'drawer.files.transferDone': ['完成', 'Done'],
       'common.create': ['新建', 'Create'],
       'drawer.files.dir': ['目录', 'dir'],
       'drawer.files.uploading': ['上传中…', 'Uploading…'],
@@ -3540,6 +3548,19 @@ window.__ModuleLoader__.load({
       return bytes
     }
 
+    function decodeTextBase64(text) {
+      return new TextDecoder().decode(decodeBase64(text))
+    }
+
+    function encodeTextBase64(text) {
+      const bytes = new TextEncoder().encode(String(text ?? ''))
+      let binary = ''
+      for (let index = 0; index < bytes.length; index += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
+      }
+      return btoa(binary)
+    }
+
     function TerminalPane({ model, host, sessionId, active, clearSignal, fontSize }) {
       const { t } = model
       const hostRef = React.useRef(host)
@@ -4260,6 +4281,9 @@ window.__ModuleLoader__.load({
       const [dialog, setDialog] = React.useState(null)
       const [dialogValue, setDialogValue] = React.useState('')
       const [dialogBusy, setDialogBusy] = React.useState(false)
+      const [editor, setEditor] = React.useState(null)
+      const [editorBusy, setEditorBusy] = React.useState(false)
+      const [transfers, setTransfers] = React.useState([])
       const dialogBusyRef = React.useRef(false)
       const fileRef = React.useRef(null)
 
@@ -4307,6 +4331,19 @@ window.__ModuleLoader__.load({
         return () => document.removeEventListener('keydown', onKey, true)
       }, [dialog, dialogBusy])
 
+      React.useEffect(() => {
+        if (!editor) return undefined
+        const onKey = (event) => {
+          if (event.key === 'Escape' && !editorBusy) {
+            event.preventDefault()
+            event.stopPropagation()
+            closeEditor()
+          }
+        }
+        document.addEventListener('keydown', onKey, true)
+        return () => document.removeEventListener('keydown', onKey, true)
+      }, [editor, editorBusy])
+
       const openDialog = (mode, entry = null) => {
         setDialog({ mode, entry })
         setDialogValue(mode === 'rename' && entry ? entry.name : '')
@@ -4352,36 +4389,115 @@ window.__ModuleLoader__.load({
         }
       }
 
-      async function downloadEntry(entry) {
-        const remote = remoteJoin(path, entry.name)
-        const value = await withPending(`download:${remote}`, () =>
-          callAction('sftp/download', { host: host.host, path: remote }),
-        )
-        if (!value) return
-        downloadBase64(entry.name, value.contentBase64)
-        notify(t('state.downloaded'), 'success')
+      const queueTransfer = (name, kind) => {
+        const id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+        setTransfers((prev) => [...prev.slice(-4), { id, name, kind, status: 'running', error: '' }])
+        return id
+      }
+      const finishTransfer = (id, error = '') => {
+        setTransfers((prev) => prev.map((item) => item.id === id ? { ...item, status: error ? 'error' : 'done', error } : item))
       }
 
-      async function onPick(event) {
-        const file = event.target.files?.[0]
-        event.target.value = ''
-        if (!file) return
-        if (file.size > 10 * 1024 * 1024) {
-          notify(t('state.fileTooLarge'), 'error')
-          return
-        }
-        setUploading(true)
+      async function openRemoteEditor(entry) {
+        const remote = remoteJoin(path, entry.name)
+        const id = queueTransfer(entry.name, 'read')
         try {
-          const contentBase64 = await readFileBase64(file)
+          const value = await callAction('sftp/download', { host: host.host, path: remote })
+          const content = decodeTextBase64(value.contentBase64)
+          if (content.includes('\u0000')) {
+            notify(t('drawer.files.editBinary'), 'error')
+            finishTransfer(id, 'binary')
+            return
+          }
+          setEditor({ entry, path: remote, content, original: content })
+          finishTransfer(id)
+        } catch (failure) {
+          finishTransfer(id, errorMessage(failure))
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        }
+      }
+
+      const closeEditor = () => {
+        if (editorBusy) return
+        if (editor && editor.content !== editor.original) {
+          let discard = false
+          try { discard = typeof window.confirm !== 'function' || window.confirm(t('drawer.files.editDiscard')) } catch {}
+          if (!discard) return
+        }
+        setEditor(null)
+      }
+
+      async function saveEditor() {
+        if (!editor || editorBusy) return
+        setEditorBusy(true)
+        try {
           await callAction('sftp/upload', {
             host: host.host,
-            path: remoteJoin(path, file.name),
-            contentBase64,
+            path: editor.path,
+            contentBase64: encodeTextBase64(editor.content),
           })
-          notify(t('state.uploaded'), 'success')
+          notify(t('drawer.files.edited'), 'success')
+          setEditor(null)
           await loadDirectory(path)
         } catch (failure) {
           notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        } finally {
+          setEditorBusy(false)
+        }
+      }
+
+      async function downloadEntry(entry) {
+        const remote = remoteJoin(path, entry.name)
+        const id = queueTransfer(entry.name, 'download')
+        try {
+          const value = await withPending(`download:${remote}`, () =>
+            callAction('sftp/download', { host: host.host, path: remote }),
+          )
+          if (!value) {
+            finishTransfer(id, 'cancelled')
+            return
+          }
+          downloadBase64(entry.name, value.contentBase64)
+          notify(t('state.downloaded'), 'success')
+          finishTransfer(id)
+        } catch (failure) {
+          finishTransfer(id, errorMessage(failure))
+          notify(t('state.error', { message: errorMessage(failure) }), 'error')
+        }
+      }
+
+      async function onPick(event) {
+        const files = [...(event.target.files ?? [])]
+        event.target.value = ''
+        if (files.length === 0) return
+        setUploading(true)
+        try {
+          for (const file of files) {
+            if (file.size > 10 * 1024 * 1024) {
+              notify(t('state.fileTooLarge'), 'error')
+              continue
+            }
+            if (entries.some((entry) => entry.name === file.name)) {
+              let overwrite = false
+              try { overwrite = typeof window.confirm !== 'function' || window.confirm(t('drawer.files.overwrite', { name: file.name })) } catch {}
+              if (!overwrite) continue
+            }
+            const id = queueTransfer(file.name, 'upload')
+            try {
+              const contentBase64 = await readFileBase64(file)
+              await callAction('sftp/upload', {
+                host: host.host,
+                path: remoteJoin(path, file.name),
+                contentBase64,
+              })
+              notify(t('state.uploaded'), 'success')
+              finishTransfer(id)
+            } catch (failure) {
+              finishTransfer(id, errorMessage(failure))
+              notify(t('state.error', { message: errorMessage(failure) }), 'error')
+            }
+          }
+          await loadDirectory(path)
         } finally {
           setUploading(false)
         }
@@ -4429,10 +4545,64 @@ window.__ModuleLoader__.load({
             uploading ? h(Spinner, { size: 12 }) : h(IconUpload, { size: 13 }),
             uploading ? t('drawer.files.uploading') : t('common.upload'),
           ),
-          h('input', { ref: fileRef, type: 'file', className: 'ssh-srOnly', onChange: (event) => void onPick(event) }),
+          h('input', { ref: fileRef, type: 'file', multiple: true, className: 'ssh-srOnly', onChange: (event) => void onPick(event) }),
         ),
+        transfers.length
+          ? h(
+              'div',
+              { className: 'ssh-transferList' },
+              transfers.slice(-5).map((item) =>
+                h(
+                  'div',
+                  { key: item.id, className: cx('ssh-transferRow', item.status) },
+                  h('span', { className: 'ssh-transferName', title: item.name }, item.name),
+                  h('span', { className: 'ssh-transferKind' }, item.kind),
+                  h('span', { className: 'ssh-transferStatus' }, item.status === 'running' ? t('drawer.files.transferRunning') : item.status === 'done' ? t('drawer.files.transferDone') : item.status),
+                ),
+              ),
+            )
+          : null,
         error
           ? h('div', { className: 'ssh-fileError' }, h(IconAlert, { size: 13 }), h('span', null, error))
+          : null,
+        editor
+          ? h(
+              'div',
+              {
+                className: 'ssh-fileDialogScrim',
+                onMouseDown: () => closeEditor(),
+              },
+              h(
+                'div',
+                {
+                  className: 'ssh-fileDialog ssh-remoteEditor',
+                  role: 'dialog',
+                  'aria-modal': 'true',
+                  'aria-label': editor.path,
+                  onMouseDown: (event) => event.stopPropagation(),
+                },
+                h('div', { className: 'ssh-fileDialogTitle' }, editor.path),
+                h(TextArea, {
+                  value: editor.content,
+                  onChange: (value) => setEditor((prev) => prev ? { ...prev, content: value } : prev),
+                  rows: 18,
+                  mono: true,
+                  spellCheck: false,
+                }),
+                h('div', { className: 'ssh-sectionHint' }, t('drawer.files.editHint')),
+                h(
+                  'div',
+                  { className: 'ssh-fileDialogActions' },
+                  h(Button, { variant: 'ghost', size: 'sm', onClick: closeEditor, disabled: editorBusy }, t('common.cancel')),
+                  h(
+                    Button,
+                    { variant: 'primary', size: 'sm', onClick: () => void saveEditor(), disabled: editorBusy || editor.content === editor.original },
+                    editorBusy ? h(Spinner, { size: 12 }) : null,
+                    t('common.save'),
+                  ),
+                ),
+              ),
+            )
           : null,
         dialog
           ? h(
@@ -4532,6 +4702,13 @@ window.__ModuleLoader__.load({
                             IconButton,
                             { title: t('common.download'), onClick: () => void downloadEntry(entry) },
                             h(IconDownload, { size: 14 }),
+                          ),
+                      entry.directory || entry.size > 1024 * 1024
+                        ? null
+                        : h(
+                            IconButton,
+                            { title: t('drawer.files.edit'), onClick: () => void openRemoteEditor(entry) },
+                            h(IconFile, { size: 14 }),
                           ),
                       h(
                         IconButton,
@@ -6302,6 +6479,14 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-kvValue.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
 .ssh-sectionHint{font-size:11.5px;color:var(--ssh-text-3);line-height:1.65}
 .ssh-tunnelTypes{display:flex;gap:4px;margin-bottom:8px}
+.ssh-remoteEditor{width:min(760px,100%)}
+.ssh-remoteEditor .ssh-textarea{min-height:340px;max-height:58vh;font-size:12px;line-height:1.5}
+.ssh-transferList{display:flex;flex-direction:column;gap:3px;margin-bottom:6px}
+.ssh-transferRow{display:grid;grid-template-columns:minmax(0,1fr) 60px 70px;gap:8px;align-items:center;padding:4px 8px;border-radius:6px;background:var(--ssh-layer-2);font-size:11px;color:var(--ssh-text-2)}
+.ssh-transferRow.error{color:var(--ssh-danger)}
+.ssh-transferName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ssh-transferKind{font-size:10px;color:var(--ssh-text-3);text-transform:uppercase}
+.ssh-transferStatus{text-align:right;font-size:10px}
 .ssh-approvalChoice{display:flex;gap:6px}
 .ssh-auditList{display:flex;flex-direction:column;gap:4px;margin-top:8px}
 .ssh-auditRow{display:grid;grid-template-columns:8px 130px 100px minmax(0,1fr) auto;align-items:center;gap:8px;padding:5px 8px;border:.5px solid var(--ssh-border);border-radius:6px;background:var(--ssh-layer-2);font-size:11px}
