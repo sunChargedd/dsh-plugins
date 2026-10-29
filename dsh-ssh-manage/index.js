@@ -511,6 +511,35 @@ export async function runAction(paths, action, params = {}) {
       const metadata = await updateMetadata(paths, alias, params.metadata || {})
       return { metadata, state: await state(paths) }
     }
+    case 'health/check-all': {
+      const { hosts } = await listSshHosts(paths)
+      const results = []
+      let cursor = 0
+      const worker = async () => {
+        while (cursor < hosts.length) {
+          const host = hosts[cursor++]
+          const started = Date.now()
+          try {
+            await testConnection(host, await passwordForHost(paths, host))
+            const latencyMs = Math.round(Date.now() - started)
+            await updateMetadata(paths, host.host, { latencyMs, checkedAt: new Date().toISOString(), health: 'online', lastError: '' })
+            results.push({ host: host.host, ok: true, latencyMs })
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            await updateMetadata(paths, host.host, { latencyMs: 0, checkedAt: new Date().toISOString(), health: 'offline', lastError: message })
+            results.push({ host: host.host, ok: false, error: message })
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(4, hosts.length) }, () => worker()))
+      return {
+        online: results.filter((item) => item.ok).length,
+        offline: results.filter((item) => !item.ok).length,
+        total: hosts.length,
+        results,
+        state: await state(paths),
+      }
+    }
     case 'ssh/test': {
       const host = await findHost(paths, params.host)
       const password = await passwordForHost(paths, host)

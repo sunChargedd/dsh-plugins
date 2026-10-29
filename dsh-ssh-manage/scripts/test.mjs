@@ -386,7 +386,7 @@ console.log('ok - known_hosts parsing/matching, mismatch/revoked rejection, keep
   assert.equal(rich.latencyMs, 12)
   assert.equal(rich.checkedAt, '2026-01-01T00:00:00.000Z')
   assert.equal('unknown' in rich, false)
-  assert.deepEqual(Object.keys(rich).sort(), ['checkedAt', 'cpuCores', 'diskGB', 'favorite', 'group', 'label', 'latencyMs', 'memoryGB', 'note', 'system', 'tags'])
+  assert.deepEqual(Object.keys(rich).sort(), ['checkedAt', 'cpuCores', 'diskGB', 'favorite', 'group', 'health', 'label', 'lastError', 'latencyMs', 'memoryGB', 'note', 'system', 'tags'])
 
   const clamped = normalizeEntry('demo', { cpuCores: 9999, memoryGB: 2_000_000, diskGB: '2000000', latencyMs: 700_000 })
   assert.equal(clamped.cpuCores, 4096)

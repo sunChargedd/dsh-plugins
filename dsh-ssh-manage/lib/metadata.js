@@ -23,6 +23,8 @@ function normalizeEntry(alias, input = {}) {
     diskGB: nonNegativeInteger(input.diskGB, 1048576),
     latencyMs: nonNegativeInteger(input.latencyMs, 600000),
     checkedAt: clean(input.checkedAt, 40),
+    health: input.health === 'online' || input.health === 'offline' ? input.health : '',
+    lastError: clean(input.lastError, 200),
   }
 }
 

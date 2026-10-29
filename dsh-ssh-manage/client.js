@@ -37,6 +37,9 @@ window.__ModuleLoader__.load({
       'toolbar.resize': ['拖动调整分组栏宽度，双击恢复默认', 'Drag to resize the group sidebar; double-click to reset'],
       'toolbar.expand': ['展开', 'Expand'],
       'toolbar.refresh': ['刷新', 'Refresh'],
+      'toolbar.checkAll': ['测试全部', 'Test all'],
+      'latency.offline': ['离线', 'Offline'],
+      'state.healthChecked': ['健康检查完成：在线 {online}，离线 {offline}', 'Health check complete: {online} online, {offline} offline'],
       'toolbar.groups': ['分组', 'Groups'],
       'toolbar.new': ['新建主机', 'New host'],
       'toolbar.newShort': ['SSH', 'SSH'],
@@ -1633,6 +1636,13 @@ window.__ModuleLoader__.load({
         notify(t('state.tested', { ms: value.latencyMs ?? 0 }), 'success')
       }
 
+      async function checkAllHosts() {
+        const value = await withPending('health:all', () => callAction('health/check-all', {}))
+        if (!value) return
+        if (value.state) applySnapshot(value.state)
+        notify(t('state.healthChecked', { online: value.online ?? 0, offline: value.offline ?? 0 }), value.offline ? 'error' : 'success')
+      }
+
       async function inspectHost(host) {
         const value = await withPending(`inspect:${host.host}`, () => callAction('ssh/inspect', { host: host.host }))
         if (!value) return
@@ -1863,6 +1873,7 @@ window.__ModuleLoader__.load({
         openBackups,
         copyValue,
         testHost,
+        checkAllHosts,
         inspectHost,
         toggleFavorite,
         savePassword,
@@ -2393,6 +2404,8 @@ window.__ModuleLoader__.load({
         openColumns,
         openLocalConfig,
         openBackups,
+        checkAllHosts,
+        isPending,
       } = model
       const group = groupFilter === null ? null : allGroups.find((entry) => entry.key === groupFilter)
       const contextLabel = groupFilter === null ? t('tree.all') : group ? group.label : t('tree.ungrouped')
@@ -2437,6 +2450,12 @@ window.__ModuleLoader__.load({
           h(IconFilter, { size: 15 }),
         ),
         h('span', { className: 'ssh-toolSpacer' }),
+        h(
+          Button,
+          { size: 'sm', variant: 'ghost', onClick: () => void checkAllHosts(), disabled: isPending('health:all') },
+          isPending('health:all') ? h(Spinner, { size: 12 }) : h(IconCheckCircle, { size: 13 }),
+          t('toolbar.checkAll'),
+        ),
         h(
           IconButton,
           { title: t('toolbar.refresh'), onClick: () => void load({ quiet: true }), disabled: refreshing },
@@ -2579,7 +2598,7 @@ window.__ModuleLoader__.load({
             'button',
             {
               type: 'button',
-              className: cx('ssh-latency', host.latencyMs ? 'ok' : 'muted'),
+              className: cx('ssh-latency', host.health === 'offline' ? 'error' : host.latencyMs ? 'ok' : 'muted'),
               title: t('table.test'),
               disabled: testing,
               onClick: (event) => {
@@ -2592,7 +2611,7 @@ window.__ModuleLoader__.load({
               : host.latencyMs
                 ? h('span', { className: 'ssh-latencyIcon' }, h(IconCheckCircle, { size: 13 }))
                 : h('span', { className: 'ssh-latencyDot' }),
-            h('span', null, testing ? t('latency.testing') : host.latencyMs ? `${host.latencyMs} ms` : t('latency.unknown')),
+            h('span', null, testing ? t('latency.testing') : host.health === 'offline' ? t('latency.offline') : host.latencyMs ? `${host.latencyMs} ms` : t('latency.unknown')),
           ),
         ),
         h(
@@ -6260,6 +6279,7 @@ body.ssh-col-resizing,body.ssh-col-resizing *{cursor:col-resize!important;user-s
 .ssh-latency{appearance:none;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0;border:0;border-radius:4px;background:transparent;color:var(--ssh-text-2);font:inherit;font-size:11.5px;white-space:nowrap;cursor:pointer}
 .ssh-latency.ok{color:var(--ssh-success)}
 .ssh-latency.muted{color:var(--ssh-text-2)}
+.ssh-latency.error{color:var(--ssh-danger)}
 .ssh-latency:hover:not(:disabled){color:var(--ssh-text)}
 .ssh-latency:disabled{cursor:default}
 .ssh-latencyDot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.55}
