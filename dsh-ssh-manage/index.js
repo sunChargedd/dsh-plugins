@@ -36,7 +36,7 @@ const ASSETS = [
   { path: '/dsh-ssh-manage/assets/addon-search.js', file: 'addon-search.js', contentType: 'text/javascript; charset=utf-8' },
 ]
 const MAX_BODY_BYTES = 16 * 1024 * 1024
-const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download', 'sftp_mkdir', 'sftp_rename', 'sftp_delete']
+const ACTIONS = ['overview', 'list_hosts', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'test_connection', 'inspect_host', 'exec', 'batch_exec', 'sftp_list', 'sftp_upload', 'sftp_download', 'sftp_mkdir', 'sftp_rename', 'sftp_delete', 'terminal_list', 'terminal_read', 'terminal_send', 'terminal_close']
 
 async function readJsonBody(req) {
   const chunks = []
@@ -322,6 +322,27 @@ async function handleSshCommand(paths, rawInput) {
   } catch (error) {
     return { kind: 'error', text: error instanceof Error ? error.message : String(error) }
   }
+}
+
+function terminalText(entry) {
+  const raw = Buffer.concat(entry.buffer, entry.bufferBytes).toString('utf8')
+  return raw
+    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .slice(-200)
+    .join('\n')
+}
+
+function terminalList() {
+  return [...ptyTextSessions.values()].map((entry) => ({
+    sessionId: entry.id,
+    host: entry.host,
+    cols: entry.cols,
+    rows: entry.rows,
+    lastActivity: new Date(entry.lastActivity).toISOString(),
+  }))
 }
 
 async function state(paths) {
@@ -643,6 +664,9 @@ function managerTool(paths, ctx) {
         overwrite: { type: 'boolean', description: 'Allow sftp_rename to replace an existing destination (default false).' },
         contentBase64: { type: 'string', description: 'Base64 encoded file content for upload.' },
         metadata: { type: 'object', description: '{ group, tags, favorite, label, note, system, cpuCores, memoryGB, diskGB, latencyMs, checkedAt }' },
+        sessionId: { type: 'string', description: 'PTY session id from terminal_list.' },
+        input: { type: 'string', description: 'Text to write to the shared terminal.' },
+        submit: { type: 'boolean', description: 'Append Enter after terminal input (default true).' },
       },
     },
     output: {
@@ -654,11 +678,11 @@ function managerTool(paths, ctx) {
       const params = { ...input }
       if (input.action !== 'save_host' && input.host && typeof input.host === 'object') params.host = input.host.host
       const settings = await loadAgentSettings(paths)
-      const readOnlyAllowed = new Set(['overview', 'list_hosts', 'test_connection', 'inspect_host', 'sftp_list', 'sftp_download'])
+      const readOnlyAllowed = new Set(['overview', 'list_hosts', 'test_connection', 'inspect_host', 'sftp_list', 'sftp_download', 'terminal_list', 'terminal_read'])
       if (settings.readonly && !readOnlyAllowed.has(input.action)) {
         throw new Error('SSH manager is in read-only mode; this operation is blocked')
       }
-      const approvalRequired = new Set(['exec', 'batch_exec', 'sftp_upload', 'sftp_mkdir', 'sftp_rename', 'sftp_delete', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password'])
+      const approvalRequired = new Set(['exec', 'batch_exec', 'sftp_upload', 'sftp_mkdir', 'sftp_rename', 'sftp_delete', 'save_host', 'delete_host', 'set_metadata', 'save_password', 'delete_password', 'terminal_send', 'terminal_close'])
       if (settings.approval === 'ask' && approvalRequired.has(input.action)) {
         const approval = ctx?.get?.('approval')
         if (!approval || typeof approval.request !== 'function' || !runContext?.agent) {
@@ -716,6 +740,27 @@ function managerTool(paths, ctx) {
             return await runAction(paths, 'sftp/rename', params)
           case 'sftp_delete':
             return await runAction(paths, 'sftp/delete', params)
+          case 'terminal_list':
+            return { sessions: terminalList() }
+          case 'terminal_read': {
+            const entry = ptyTextSessions.get(requireString(params, 'sessionId'))
+            if (!entry) throw new Error('Terminal session was not found')
+            return { sessionId: entry.id, host: entry.host, text: terminalText(entry) }
+          }
+          case 'terminal_send': {
+            const entry = ptyTextSessions.get(requireString(params, 'sessionId'))
+            if (!entry) throw new Error('Terminal session was not found')
+            const text = String(params.input ?? '')
+            entry.lastActivity = Date.now()
+            entry.session.stream.write(`${text}${params.submit === false ? '' : '\r'}`)
+            return { sessionId: entry.id, sent: text.length }
+          }
+          case 'terminal_close': {
+            const id = requireString(params, 'sessionId')
+            if (!ptyTextSessions.has(id)) throw new Error('Terminal session was not found')
+            closeTextSession(id)
+            return { sessionId: id, closed: true }
+          }
           default:
             throw new Error(`Unknown action: ${String(input.action)}`)
         }
@@ -805,7 +850,7 @@ async function openTextSession(paths, payload, runtime = defaultPtyRuntime) {
       try { session.close() } catch {}
       throw new Error('Terminal session already exists')
     }
-    const entry = { id, session, cols, rows, lastActivity: Date.now(), seq: 0, buffer: [], bufferBytes: 0 }
+    const entry = { id, host: host.host, session, cols, rows, lastActivity: Date.now(), seq: 0, buffer: [], bufferBytes: 0 }
     ptyTextSessions.set(id, entry)
     session.stream.on('data', (chunk) => {
       entry.lastActivity = Date.now()
@@ -1235,7 +1280,7 @@ function registerAssetRoutes(ctx) {
   }
 }
 
-export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, handleSocksConnection, handleSshCommand, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
+export const __test = { resolveSshPaths, listSshHosts, saveSshHost, deleteSshHost, runAction, managerTool, parseProxyJump, resolveJumpHost, tunnelList, startTunnel, stopTunnel, tunnelPort, handleSocksConnection, handleSshCommand, terminalList, terminalText, refreshSshHostCatalog, getSshHostCatalog: () => sshHostCatalogText, MAX_BODY_BYTES, PTY_ROUTE, PTY_EVENTS_ROUTE, PTY_OPEN_ROUTE, PTY_ATTACH_ROUTE, PTY_INPUT_ROUTE, PTY_RESIZE_ROUTE, PTY_CLOSE_ROUTE, PTY_CLEAR_ROUTE, PTY_TOUCH_ROUTE, PTY_IDLE_MS, sweepIdlePtySessions, MAX_PTY_SESSIONS, PTY_BUFFER_BYTES, ASSETS, handlePtyUpgrade, ptyTextSessions }
 
 export const inject = ['webServer']
 

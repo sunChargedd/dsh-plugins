@@ -560,6 +560,8 @@ console.log('ok - host metadata normalizes info fields, caps and drops unknown k
   const snippetState = await runAction(routePaths, 'state/refresh', {})
   assert.equal(snippetState.state.snippets[0].command, 'ls -la')
   await runAction(routePaths, 'snippet/delete', { id: savedSnippet.snippets[0].id })
+  assert.deepEqual(indexTest.terminalList(), [])
+  { const termBuf = Buffer.from('\u001b[31mred\u001b[0m\r\nline2'); assert.equal(indexTest.terminalText({ buffer: [termBuf], bufferBytes: termBuf.length }), 'red\nline2') }
   const tool = indexTest.managerTool(routePaths)
   assert.deepEqual(tool.parameters.properties.host.oneOf, [{ type: 'string' }, { type: 'object' }])
   assert.ok(tool.parameters.properties.action.enum.includes('sftp_mkdir'))

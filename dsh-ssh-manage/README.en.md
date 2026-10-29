@@ -23,7 +23,7 @@
 `dsh-ssh-manage` is a Web plugin for [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness). It turns the hosts in `~/.ssh/config` into manageable objects in the DSH sidebar:
 
 - **Host management** — scan the config, groups, tags, favorites, notes, latency, host inspection, one-click health checks, optional 5-minute scheduled checks with offline alerts, and per-host quick commands; SSH aliases are globally unique, so use the repeatable Display name for same names across groups;
-- **DSH Agent integration** — a compact host catalog (alias/group/display name) is injected into the DSH system prompt to keep token use low; full details come from list_hosts on demand, and the Agent uses `ssh_manager` directly for exec, batch commands, inspection and SFTP; the DSH slash command `/ssh <alias> <command>` runs directly, and `/ssh` lists hosts;
+- **DSH Agent integration** — a compact host catalog is injected into the DSH system prompt; exec/batch/inspect/SFTP are directly callable; `/ssh <alias> <command>` runs from the composer and `/ssh` lists hosts; the Agent can also list/read/send/close the user’s open interactive PTY sessions via terminal_list/read/send/close;
 - **Agent safety** — Settings can enable read-only mode; dangerous actions can “ask before executing” through DSH approval; exec, batch commands, SFTP writes and host changes are written to a local audit log with password/token redaction;
 - **Interactive terminal** — ssh2 allocates a PTY, xterm.js renders it, with colors, arrow keys, full-screen programs such as `vim`/`top`, and window resizing;
 - **Backup and migration** — export/import hosts, groups, tags, notes, favorites and passwords from Settings; exports are re-encrypted with a passphrase (scrypt + AES-256-GCM) and imports merge by alias;
@@ -100,16 +100,16 @@ Creating a host requires alias, hostname and password. The password is not writt
 
 ### From npm (recommended)
 
-npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.24`).
+npm package: [`dsh-ssh-manage`](https://www.npmjs.com/package/dsh-ssh-manage) (current version `0.3.25`).
 
 ```text
-plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.24
+plugin_manager action=install_bundle target=dsh-ssh-manage@0.3.25
 ```
 
 Or with the DSH CLI:
 
 ```bash
-dsh plugin add dsh-ssh-manage@0.3.24
+dsh plugin add dsh-ssh-manage@0.3.25
 ```
 
 After installation, refresh the Web page; the sidebar shows an "SSH Hosts" entry with id `dsh-ssh-manage`.
